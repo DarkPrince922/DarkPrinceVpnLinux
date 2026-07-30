@@ -1,3 +1,8 @@
 darkprince
 dist/
 *.log
+
+# рабочие каталоги и результат makepkg — появляются при сборке пакета в дереве
+packaging/pkg/
+packaging/src/
+packaging/*.pkg.tar.*
