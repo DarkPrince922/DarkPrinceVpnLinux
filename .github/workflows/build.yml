@@ -35,9 +35,20 @@ jobs:
         run: go vet ./...
 
       - name: Тесты
-        # часть тестов поднимает TUN-интерфейс и правит маршруты; без root
-        # они пропускаются, поэтому запускаем под sudo
-        run: sudo -E env "PATH=$PATH" go test ./... -count=1
+        # Часть тестов поднимает TUN-интерфейс и правит маршруты, поэтому
+        # запускаем под sudo. DARKPRINCE_REQUIRE_ROOT_TESTS не даёт им тихо
+        # пропуститься, если привилегий вдруг не окажется: пропуск в логе
+        # выглядит как успех, и сборка была бы зелёной впустую.
+        run: |
+          sudo -E env "PATH=$PATH" DARKPRINCE_REQUIRE_ROOT_TESTS=1 \
+            go test ./... -count=1 -v 2>&1 | tee test.log
+          echo "── итог ──"
+          grep -cE '^(=== RUN|--- PASS)' test.log
+          if grep -q '^--- SKIP' test.log; then
+            echo "::error::тесты пропускались, хотя не должны были"
+            grep '^--- SKIP' test.log
+            exit 1
+          fi
 
       - name: Сборка
         run: go build -o darkprince .

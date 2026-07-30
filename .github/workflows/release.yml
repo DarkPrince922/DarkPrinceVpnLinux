@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия релиза (например 1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+# начатый релиз не прерываем: иначе можно получить полузалитые файлы
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          # свежий xray-core требует Go 1.26
+          go-version: "1.26"
+          cache: true
+
+      - name: Определить версию
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Версия релиза: $VERSION"
+
+      - name: Тесты
+        # TUN-тесты без root пропускаются, а пропущенный тест — не пройденный;
+        # выпускать релиз на такой проверке нельзя
+        run: |
+          sudo -E env "PATH=$PATH" DARKPRINCE_REQUIRE_ROOT_TESTS=1 \
+            go test ./... -count=1
+
+      - name: Собрать под все архитектуры
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          for arch in amd64 arm64; do
+            echo "── linux/$arch ──"
+            # CGO не нужен: и ядро, и мост — чистый Go, поэтому бинарник
+            # статический и не зависит от версии libc в системе пользователя
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/darkprince" .
+
+            stage="darkprince-vpn-$VERSION-linux-$arch"
+            mkdir -p "$stage"
+            cp dist/darkprince "$stage/"
+            cp README.md "$stage/"
+            cp packaging/darkprince-vpn.service "$stage/"
+            cp scripts/download-geodata.sh "$stage/"
+
+            tar -czf "dist/$stage.tar.gz" "$stage"
+            rm -rf "$stage" dist/darkprince
+          done
+
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          ls -lh
+          cat SHA256SUMS
+
+      - name: Создать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          NOTES=$(cat <<EOF
+          Версия $VERSION
+
+          Статические бинарники, зависимостей нет. Ядро Xray внутри.
+
+          \`\`\`bash
+          tar -xzf darkprince-vpn-$VERSION-linux-amd64.tar.gz
+          cd darkprince-vpn-$VERSION-linux-amd64
+          sudo install -m755 darkprince /usr/local/bin/
+          sudo install -m644 darkprince-vpn.service /etc/systemd/system/
+          sudo ./download-geodata.sh
+          sudo systemctl enable --now darkprince-vpn
+          \`\`\`
+
+          Проверить контрольные суммы: \`sha256sum -c SHA256SUMS\`
+          EOF
+          )
+          NOTES=$(echo "$NOTES" | sed 's/^          //')
+
+          if ! gh release create "v$VERSION" dist/*.tar.gz dist/SHA256SUMS \
+                --title "DarkPrince VPN $VERSION" \
+                --notes "$NOTES" \
+                --repo "${{ github.repository }}"; then
+            # релиз уже существует — обновляем файлы и описание
+            gh release upload "v$VERSION" dist/*.tar.gz dist/SHA256SUMS \
+              --clobber --repo "${{ github.repository }}"
+            gh release edit "v$VERSION" \
+              --title "DarkPrince VPN $VERSION" \
+              --notes "$NOTES" \
+              --repo "${{ github.repository }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.version.outputs.version }}
+          path: dist/

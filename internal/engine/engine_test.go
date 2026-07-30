@@ -208,11 +208,21 @@ func assertGetsOK(t *testing.T, client *http.Client, targetURL, through string) 
 	}
 }
 
+// requireRoot пропускает тест на машине без привилегий — на ноутбуке
+// разработчика это нормально. В CI пропуск недопустим: пропущенный тест в
+// логе неотличим от пройденного, и достаточно опечатки в sudo, чтобы
+// проверки TUN тихо перестали выполняться, а сборка осталась зелёной.
+// Переменная DARKPRINCE_REQUIRE_ROOT_TESTS превращает такой пропуск в отказ.
 func requireRoot(t *testing.T) {
 	t.Helper()
-	if os.Geteuid() != 0 {
-		t.Skip("нужны права root и CAP_NET_ADMIN")
+	if os.Geteuid() == 0 {
+		return
 	}
+	if os.Getenv("DARKPRINCE_REQUIRE_ROOT_TESTS") != "" {
+		t.Fatal("тест требует root, а окружение обещало его дать " +
+			"(DARKPRINCE_REQUIRE_ROOT_TESTS задан)")
+	}
+	t.Skip("нужны права root и CAP_NET_ADMIN")
 }
 
 var ifaceCounter int

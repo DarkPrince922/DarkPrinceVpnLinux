@@ -12,7 +12,12 @@ import (
 	"github.com/darkprince922/darkprincevpnlinux/internal/cli"
 )
 
+// version подставляется при сборке релиза через -ldflags; в обычной сборке
+// остаётся dev, чтобы было видно, что бинарник собран не из тега.
+var version = "dev"
+
 func main() {
+	cli.Version = version
 	if err := cli.Run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "Ошибка:", err)
 		os.Exit(1)

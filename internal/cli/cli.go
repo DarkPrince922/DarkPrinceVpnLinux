@@ -44,12 +44,16 @@ const usage = `darkprince — VPN-клиент DarkPrince для Linux
 
 Служба:
   daemon                     запустить службу (в systemd делается само)
+  version                    версия клиента
 
 Режимы:
   proxy   ядро слушает SOCKS 127.0.0.1:10808 и HTTP 127.0.0.1:10809,
           приложения направляются туда вручную; прав не требует
   tun     весь трафик системы идёт через туннель; нужен root
 `
+
+// Version подставляется из main при сборке релиза.
+var Version = "dev"
 
 // Run разбирает аргументы и выполняет команду.
 func Run(args []string) error {
@@ -92,6 +96,9 @@ func Run(args []string) error {
 		return setLink(paths, rest)
 	case "login":
 		return login(paths, rest)
+	case "version", "--version", "-v":
+		fmt.Printf("darkprince %s\n", Version)
+		return nil
 	case "logout":
 		if err := ipc.Call(paths.Socket, ipc.CmdLogout, nil, nil, time.Minute); err != nil {
 			return err
