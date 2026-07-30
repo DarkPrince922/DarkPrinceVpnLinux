@@ -3,6 +3,7 @@ module github.com/darkprince922/darkprincevpnlinux
 go 1.26.3
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/vishvananda/netlink v1.3.1
 	github.com/xjasonlyu/tun2socks/v2 v2.7.0
 	github.com/xtls/xray-core v1.260327.0
@@ -16,7 +17,6 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/juju/ratelimit v1.0.2 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect
