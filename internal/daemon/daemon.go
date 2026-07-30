@@ -16,14 +16,18 @@ import (
 	"github.com/darkprince922/darkprincevpnlinux/internal/engine"
 	"github.com/darkprince922/darkprincevpnlinux/internal/ipc"
 	"github.com/darkprince922/darkprincevpnlinux/internal/store"
+	"github.com/darkprince922/darkprincevpnlinux/internal/webui"
 )
 
 // Daemon держит всё состояние службы. CLI — тонкий клиент поверх него.
 type Daemon struct {
-	paths  store.Paths
-	store  *store.Store
-	api    *api.Client
-	engine *engine.Engine
+	paths   store.Paths
+	webAddr string
+	store   *store.Store
+	api     *api.Client
+	engine  *engine.Engine
+
+	web *webui.Server
 
 	mu sync.Mutex
 	// начатые входы через Telegram: между запросом ссылки и ожиданием
@@ -32,7 +36,7 @@ type Daemon struct {
 }
 
 // New поднимает службу и её состояние.
-func New(paths store.Paths) (*Daemon, error) {
+func New(paths store.Paths, webAddr string) (*Daemon, error) {
 	st, err := store.Open(paths.StateFile)
 	if err != nil {
 		return nil, err
@@ -47,6 +51,7 @@ func New(paths store.Paths) (*Daemon, error) {
 	}
 	return &Daemon{
 		paths:       paths,
+		webAddr:     webAddr,
 		store:       st,
 		api:         api.New(st),
 		engine:      engine.New(),
@@ -61,6 +66,16 @@ func (d *Daemon) Run() error {
 		return err
 	}
 	defer os.Remove(d.paths.Socket)
+
+	// Интерфейс не обязателен: если порт занят, служба всё равно должна
+	// работать — CLI от этого не зависит.
+	if web, err := webui.Start(d.webAddr, Version, d.RunCommand); err != nil {
+		log.Printf("интерфейс не поднялся: %v", err)
+	} else {
+		d.web = web
+		defer web.Close()
+		log.Printf("интерфейс: %s", web.URL())
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -78,6 +93,23 @@ func (d *Daemon) Run() error {
 	err = ipc.Serve(listener, d.handle)
 	d.engine.Stop()
 	return err
+}
+
+// Version подставляется из main, чтобы интерфейс мог её показать.
+var Version = "dev"
+
+// RunCommand выполняет ту же команду, что приходит от CLI по сокету, —
+// интерфейс не дублирует логику, а пользуется ею.
+func (d *Daemon) RunCommand(command string, args json.RawMessage) (any, error) {
+	return d.handle(ipc.Request{Command: command, Args: args})
+}
+
+// WebURL — адрес интерфейса вместе с токеном, пусто если он не поднялся.
+func (d *Daemon) WebURL() string {
+	if d.web == nil {
+		return ""
+	}
+	return d.web.URL()
 }
 
 func (d *Daemon) handle(request ipc.Request) (any, error) {
@@ -113,6 +145,12 @@ func (d *Daemon) handle(request ipc.Request) (any, error) {
 		return d.api.Subscriptions(ctx)
 	case ipc.CmdSelectSub:
 		return nil, d.selectSubscription(request)
+	case ipc.CmdWebURL:
+		url := d.WebURL()
+		if url == "" {
+			return nil, fmt.Errorf("интерфейс не запущен")
+		}
+		return map[string]string{"url": url}, nil
 	}
 	return nil, fmt.Errorf("неизвестная команда %q", request.Command)
 }
@@ -154,11 +192,11 @@ type ServerView struct {
 	Selected bool   `json:"selected"`
 }
 
+// servers отдаёт узлы подписки. Пустой список — не ошибка, а обычное
+// состояние до первой загрузки: подсказывать, что делать дальше, должен
+// тот, кто показывает результат, а не служба.
 func (d *Daemon) servers() ([]ServerView, error) {
 	profiles := d.api.CachedServers()
-	if len(profiles) == 0 {
-		return nil, fmt.Errorf("список серверов пуст: выполните darkprince refresh")
-	}
 	state := d.store.Snapshot()
 	selected := state.ServerIndex(state.SelectedSubscription)
 

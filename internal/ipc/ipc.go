@@ -30,6 +30,7 @@ const (
 	CmdSetSubscription = "set-subscription"
 	CmdSubscriptions   = "subscriptions"
 	CmdSelectSub       = "select-subscription"
+	CmdWebURL          = "web-url"
 )
 
 // Request — что CLI просит сделать.

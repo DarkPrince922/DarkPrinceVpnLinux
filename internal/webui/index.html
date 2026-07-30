@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DarkPrince VPN</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23CFAA62' d='M12 1 3 5v6c0 5 3.8 9.7 9 11 5.2-1.3 9-6 9-11V5z'/%3E%3C/svg%3E">
+<style>
+/* Палитра совпадает с Android-приложением: глубокий тёмно-синий фон,
+   золотистый акцент, холодное свечение вторичным. */
+:root {
+  --bg: #0A0E17;
+  --surface: #121A29;
+  --surface-high: #1A2438;
+  --gold: #CFAA62;
+  --gold-deep: #B8924C;
+  --glow: #5E8BFF;
+  --text: #EDF0F7;
+  --muted: #9AA6BD;
+  --success: #3FB68B;
+  --danger: #E05B5B;
+  --outline: #2A3650;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  justify-content: center;
+  padding: 32px 16px 48px;
+}
+
+/* Живой фон: два мягких пятна, как AnimatedBackground в Android */
+body::before, body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+body::before {
+  background: radial-gradient(circle at 50% 22%, rgba(207,170,98,.16), transparent 55%);
+  animation: drift 28s linear infinite;
+}
+body::after {
+  background: radial-gradient(circle at 50% 78%, rgba(94,139,255,.14), transparent 55%);
+  animation: drift 34s linear infinite reverse;
+}
+@keyframes drift {
+  0%   { transform: translate(-6%, 0); }
+  50%  { transform: translate(6%, 3%); }
+  100% { transform: translate(-6%, 0); }
+}
+
+main { position: relative; z-index: 1; width: 100%; max-width: 460px; }
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+h1 .version { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+/* --- кнопка подключения --- */
+
+.power-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.power {
+  position: relative;
+  width: 176px;
+  height: 176px;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface-high);
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background .5s, box-shadow .5s, transform .2s;
+}
+.power:disabled { cursor: progress; }
+.power svg { width: 68px; height: 68px; }
+
+.power[data-state="connected"] {
+  background: var(--gold);
+  color: #14100A;
+  box-shadow: 0 0 48px rgba(207,170,98,.35);
+}
+.power[data-state="connecting"] { background: var(--glow); color: #fff; }
+.power[data-state="error"] { background: var(--danger); color: #fff; }
+
+/* расходящиеся волны — только когда туннель поднят */
+.power[data-state="connected"]::before,
+.power[data-state="connected"]::after {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  animation: radar 2.6s ease-out infinite;
+}
+.power[data-state="connected"]::after { animation-delay: 1.3s; }
+@keyframes radar {
+  from { transform: scale(.82); opacity: .55; }
+  to   { transform: scale(1.25); opacity: 0; }
+}
+
+.state-text { font-size: 17px; font-weight: 500; }
+.traffic { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+/* --- карточки --- */
+
+.card {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--outline);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.row { display: flex; justify-content: space-between; gap: 12px; }
+.row + .row { margin-top: 6px; }
+.row .label { color: var(--muted); }
+
+/* --- режимы --- */
+
+.modes { display: flex; gap: 8px; }
+.mode {
+  flex: 1;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--outline);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  transition: .2s;
+}
+.mode[aria-pressed="true"] {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: rgba(207,170,98,.08);
+}
+.mode small { display: block; font-size: 11px; opacity: .75; margin-top: 2px; }
+
+/* --- список серверов --- */
+
+.servers { max-height: 260px; overflow-y: auto; margin: -4px -4px -4px 0; padding-right: 4px; }
+.server {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.server:hover { background: var(--surface-high); }
+.server[aria-current="true"] { background: rgba(207,170,98,.1); }
+.server .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--outline); flex: none;
+}
+.server[aria-current="true"] .dot { background: var(--gold); }
+.server .meta { color: var(--muted); font-size: 12px; }
+.server .name { display: block; }
+
+/* --- кнопки и поля --- */
+
+button.action {
+  width: 100%;
+  padding: 11px;
+  border-radius: 10px;
+  border: 1px solid var(--outline);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+button.action:hover { background: var(--surface-high); }
+button.action.primary {
+  background: var(--gold); color: #14100A; border-color: var(--gold);
+  font-weight: 600;
+}
+button.action.primary:hover { background: var(--gold-deep); }
+button.action + button.action { margin-top: 8px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+input[type=text] {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--outline);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  margin-bottom: 8px;
+}
+
+.hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 80px);
+  background: var(--surface-high);
+  border: 1px solid var(--outline);
+  border-radius: 10px;
+  padding: 11px 16px;
+  max-width: 90vw;
+  transition: transform .25s, opacity .25s;
+  opacity: 0;
+  z-index: 10;
+}
+#toast.show { transform: translate(-50%, 0); opacity: 1; }
+#toast.error { border-color: var(--danger); color: var(--danger); }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>DarkPrince VPN <span class="version" id="version"></span></h1>
+
+  <div class="power-wrap">
+    <button class="power" id="power" data-state="disconnected" aria-label="Подключить">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" aria-hidden="true">
+        <path d="M12 3v9"/>
+        <path d="M6.6 6.6a8 8 0 1 0 10.8 0"/>
+      </svg>
+    </button>
+    <div class="state-text" id="state">Отключено</div>
+    <div class="traffic" id="traffic"></div>
+  </div>
+
+  <div class="card">
+    <h2>Режим</h2>
+    <div class="modes">
+      <button class="mode" id="mode-proxy" aria-pressed="false">
+        Прокси<small>SOCKS и HTTP локально</small>
+      </button>
+      <button class="mode" id="mode-tun" aria-pressed="false">
+        TUN<small>весь трафик системы</small>
+      </button>
+    </div>
+    <p class="hint hidden" id="proxy-hint"></p>
+  </div>
+
+  <div class="card">
+    <h2>Подписка</h2>
+    <div class="row"><span class="label">Аккаунт</span><span id="account">—</span></div>
+    <div class="row"><span class="label">Серверов</span><span id="server-count">0</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Серверы</h2>
+    <div class="servers" id="servers"></div>
+    <p class="hint" id="no-servers">Список пуст. Загрузите подписку.</p>
+    <div style="margin-top:10px">
+      <button class="action" id="refresh">Обновить подписку</button>
+    </div>
+  </div>
+
+  <div class="card" id="login-card">
+    <h2>Вход</h2>
+    <button class="action primary" id="login-tg">Войти через Telegram</button>
+    <p class="hint hidden" id="tg-hint"></p>
+    <p class="hint">Или работайте по ссылке, которой с вами поделились:</p>
+    <input type="text" id="link" placeholder="https://sub.example/…" autocomplete="off">
+    <button class="action" id="link-save">Сохранить ссылку</button>
+  </div>
+
+  <div class="card hidden" id="logout-card">
+    <button class="action" id="logout">Выйти из аккаунта</button>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const token = new URLSearchParams(location.search).get("token")
+  || sessionStorage.getItem("dp_token") || "";
+if (token) {
+  sessionStorage.setItem("dp_token", token);
+  // прячем токен из адресной строки, чтобы не утёк в историю или скриншот
+  history.replaceState(null, "", location.pathname);
+}
+
+let state = { mode: "proxy", servers: [], selected: 0, busy: false };
+
+async function api(path, body) {
+  const response = await fetch("/api/" + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "X-Token": token, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) {}
+  if (!response.ok) throw new Error((data && data.error) || text || "ошибка запроса");
+  return data;
+}
+
+let toastTimer;
+function toast(message, isError) {
+  const element = document.getElementById("toast");
+  element.textContent = message;
+  element.classList.toggle("error", !!isError);
+  element.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => element.classList.remove("show"), 4000);
+}
+
+function bytes(value) {
+  if (!value) return "0 Б";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  let index = 0, size = value;
+  while (size >= 1024 && index < units.length - 1) { size /= 1024; index++; }
+  return (index === 0 ? size : size.toFixed(1)) + " " + units[index];
+}
+
+function render(status) {
+  const running = status.running;
+  const power = document.getElementById("power");
+  power.dataset.state = state.busy ? "connecting" : (running ? "connected" : "disconnected");
+  power.setAttribute("aria-label", running ? "Отключить" : "Подключить");
+
+  document.getElementById("state").textContent =
+    state.busy ? "Подключение…" : (running ? "Подключено" : "Отключено");
+  document.getElementById("traffic").textContent =
+    running ? `↑ ${bytes(status.uplink)}   ↓ ${bytes(status.downlink)}` : "";
+
+  if (running && status.mode) state.mode = status.mode;
+  for (const mode of ["proxy", "tun"]) {
+    document.getElementById("mode-" + mode)
+      .setAttribute("aria-pressed", String(state.mode === mode));
+  }
+
+  const hint = document.getElementById("proxy-hint");
+  if (running && status.mode === "proxy") {
+    hint.classList.remove("hidden");
+    hint.innerHTML = "Направьте приложения на прокси:<br>"
+      + `<span class="mono">SOCKS5 ${status.socks_addr}</span><br>`
+      + (status.http_addr ? `<span class="mono">HTTP   ${status.http_addr}</span>` : "");
+  } else {
+    hint.classList.add("hidden");
+  }
+
+  document.getElementById("account").textContent =
+    status.account || (status.logged_in ? "вход выполнен"
+      : status.using_shared ? "гостевой доступ" : "не выполнен");
+  document.getElementById("server-count").textContent = status.server_count || 0;
+  state.selected = status.selected_index || 0;
+
+  document.getElementById("login-card")
+    .classList.toggle("hidden", !!status.logged_in);
+  document.getElementById("logout-card")
+    .classList.toggle("hidden", !status.logged_in && !status.using_shared);
+}
+
+function renderServers(servers) {
+  state.servers = servers || [];
+  const container = document.getElementById("servers");
+  container.innerHTML = "";
+  document.getElementById("no-servers")
+    .classList.toggle("hidden", state.servers.length > 0);
+
+  for (const server of state.servers) {
+    const button = document.createElement("button");
+    button.className = "server";
+    button.setAttribute("aria-current", String(server.selected));
+    button.innerHTML = `<span class="dot"></span><span>
+        <span class="name">${escapeHtml(server.name)}</span>
+        <span class="meta">${escapeHtml(server.protocol)} · ${escapeHtml(server.address)}</span>
+      </span>`;
+    button.onclick = () => selectServer(server.index);
+    container.appendChild(button);
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function poll() {
+  try {
+    const status = await api("status");
+    render(status);
+  } catch (error) {
+    document.getElementById("state").textContent = "Демон не отвечает";
+  }
+}
+
+async function loadServers() {
+  try { renderServers(await api("servers")); } catch (_) { renderServers([]); }
+}
+
+async function selectServer(index) {
+  try {
+    await api("select-server", { index });
+    await loadServers();
+    toast("Узел выбран");
+  } catch (error) { toast(error.message, true); }
+}
+
+document.getElementById("power").onclick = async () => {
+  const status = await api("status").catch(() => ({}));
+  state.busy = true;
+  render(status);
+  try {
+    if (status.running) {
+      await api("disconnect", {});
+      toast("Отключено");
+    } else {
+      await api("connect", { mode: state.mode });
+      toast("Подключено");
+    }
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.busy = false;
+    await poll();
+    await loadServers();
+  }
+};
+
+for (const mode of ["proxy", "tun"]) {
+  document.getElementById("mode-" + mode).onclick = () => {
+    state.mode = mode;
+    poll();
+  };
+}
+
+document.getElementById("refresh").onclick = async (event) => {
+  event.target.disabled = true;
+  try {
+    const servers = await api("refresh", {});
+    renderServers(servers);
+    toast(`Загружено узлов: ${servers.length}`);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    event.target.disabled = false;
+    poll();
+  }
+};
+
+document.getElementById("link-save").onclick = async () => {
+  const url = document.getElementById("link").value.trim();
+  if (!url) return;
+  try {
+    await api("set-subscription", { url });
+    toast("Ссылка сохранена, обновляю подписку…");
+    const servers = await api("refresh", {});
+    renderServers(servers);
+    poll();
+  } catch (error) { toast(error.message, true); }
+};
+
+document.getElementById("login-tg").onclick = async (event) => {
+  event.target.disabled = true;
+  const hint = document.getElementById("tg-hint");
+  try {
+    const start = await api("login-telegram", {});
+    hint.classList.remove("hidden");
+    hint.innerHTML = `Откройте ссылку и нажмите «Start» в боте:<br>
+      <a href="${escapeHtml(start.link)}" target="_blank" rel="noopener">${escapeHtml(start.link)}</a><br>
+      Жду подтверждения…`;
+    const user = await api("await-telegram", { token: start.token });
+    hint.classList.add("hidden");
+    toast("Вы вошли" + (user && user.email ? ": " + user.email : ""));
+    poll(); loadServers();
+  } catch (error) {
+    hint.classList.add("hidden");
+    toast(error.message, true);
+  } finally {
+    event.target.disabled = false;
+  }
+};
+
+document.getElementById("logout").onclick = async () => {
+  try {
+    await api("logout", {});
+    toast("Вы вышли");
+    poll(); loadServers();
+  } catch (error) { toast(error.message, true); }
+};
+
+api("version").then(v => {
+  document.getElementById("version").textContent = v.version;
+}).catch(() => {});
+
+poll();
+loadServers();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

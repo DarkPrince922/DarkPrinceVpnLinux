@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,8 +43,11 @@ const usage = `darkprince — VPN-клиент DarkPrince для Linux
   login --email <адрес>      вход по почте
   logout                     выйти
 
+Интерфейс:
+  gui                        открыть графический интерфейс в браузере
+
 Служба:
-  daemon                     запустить службу (в systemd делается само)
+  daemon [--web АДРЕС]       запустить службу (в systemd делается само)
   version                    версия клиента
 
 Режимы:
@@ -67,11 +71,14 @@ func Run(args []string) error {
 
 	switch command {
 	case "daemon":
-		service, err := daemon.New(paths)
+		daemon.Version = Version
+		service, err := daemon.New(paths, webAddr(rest))
 		if err != nil {
 			return err
 		}
 		return service.Run()
+	case "gui":
+		return openGUI(paths)
 	case "status":
 		return showStatus(paths)
 	case "connect":
@@ -107,6 +114,43 @@ func Run(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("неизвестная команда %q; darkprince help покажет список", command)
+}
+
+// webAddr разбирает --web у команды daemon. Значение по умолчанию — петля:
+// через интерфейс управляют VPN, наружу его выставлять нельзя.
+func webAddr(args []string) string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--web" {
+			return args[i+1]
+		}
+	}
+	return "127.0.0.1:8765"
+}
+
+// openGUI спрашивает у демона адрес интерфейса и открывает браузер.
+func openGUI(paths store.Paths) error {
+	var response struct {
+		URL string `json:"url"`
+	}
+	if err := ipc.Call(paths.Socket, ipc.CmdWebURL, nil, &response, 10*time.Second); err != nil {
+		return err
+	}
+
+	fmt.Println("Интерфейс:", response.URL)
+	if err := openBrowser(response.URL); err != nil {
+		fmt.Println("Браузер не открылся сам — скопируйте ссылку выше.")
+	}
+	return nil
+}
+
+// openBrowser зовёт xdg-open от имени того, кто запустил sudo: браузер под
+// root открывать нельзя — он полезет в чужой профиль и оставит там файлы
+// с правами root.
+func openBrowser(url string) error {
+	if user := os.Getenv("SUDO_USER"); user != "" && os.Geteuid() == 0 {
+		return exec.Command("runuser", "-u", user, "--", "xdg-open", url).Start()
+	}
+	return exec.Command("xdg-open", url).Start()
 }
 
 func showStatus(paths store.Paths) error {
@@ -211,6 +255,10 @@ func refresh(paths store.Paths) error {
 }
 
 func printServers(servers []daemon.ServerView) {
+	if len(servers) == 0 {
+		fmt.Println("Список серверов пуст. Загрузите подписку: darkprince refresh")
+		return
+	}
 	for _, server := range servers {
 		marker := " "
 		if server.Selected {
