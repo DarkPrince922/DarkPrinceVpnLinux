@@ -23,9 +23,9 @@ import (
 // остановка), не имея на руках настоящего VPN-сервера.
 func directProfile() xray.Profile {
 	return xray.Profile{
-		Protocol: xray.VLESS,
-		Name:     "Прямой выход",
-		Address:  "-",
+		Protocol:  xray.VLESS,
+		Name:      "Прямой выход",
+		Address:   "-",
 		RawConfig: `{"outbounds":[{"tag":"proxy","protocol":"freedom","settings":{}}]}`,
 	}
 }
@@ -85,8 +85,8 @@ func TestProxyModeServesSocksAndHTTP(t *testing.T) {
 	}}
 	assertGetsOK(t, httpClient, target.URL, "HTTP-инбаунд")
 
-	// счётчики ядра должны увидеть прошедший трафик
-	if status := e.Status(); status.Uplink <= 0 || status.Downlink <= 0 {
+	// счётчики ядра должны увидеть прошедший трафик (с небольшой задержкой)
+	if status := waitForTraffic(e, 3*time.Second); status.Uplink <= 0 || status.Downlink <= 0 {
 		t.Errorf("статистика не считается: uplink=%d downlink=%d", status.Uplink, status.Downlink)
 	}
 }
@@ -302,4 +302,69 @@ func serveSocksHandshake(conn net.Conn, requested chan<- string) {
 	// отвечаем «успех», тело соединения тесту не нужно
 	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 	io.Copy(io.Discard, conn)
+}
+
+// Профиль, пришедший из подписки, отличается от собранного руками: парсер
+// сохраняет конфиг панели целиком, вместе с полями вроде remarks. Счётчики
+// обязаны работать и на нём.
+func TestStatsCountOnSubscriptionProfile(t *testing.T) {
+	profiles := xray.ParseSubscription(
+		`[{"remarks":"Узел","outbounds":[{"tag":"proxy","protocol":"freedom","settings":{}}]}]`)
+	if len(profiles) != 1 {
+		t.Fatalf("узлов = %d", len(profiles))
+	}
+
+	socksAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer target.Close()
+
+	// оба инбаунда, как поднимает демон в режиме прокси
+	httpAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+
+	e := New()
+	err := e.Start(profiles[0], Options{
+		Mode: ModeProxy, SocksAddr: socksAddr, HTTPAddr: httpAddr,
+	})
+	if err != nil {
+		t.Fatalf("движок не запустился: %v", err)
+	}
+	defer e.Stop()
+
+	dialer, err := proxy.SOCKS5("tcp", socksAddr, nil, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		},
+	}}
+	assertGetsOK(t, client, target.URL, "SOCKS")
+	// Нисходящие байты ядро досчитывает при закрытии соединения, а не в
+	// момент, когда клиент дочитал тело. Пока keep-alive держит соединение
+	// открытым, счётчик показывает ноль — поэтому закрываем его, как это в
+	// конце концов происходит и в жизни.
+	client.CloseIdleConnections()
+
+	status := waitForTraffic(e, 3*time.Second)
+	if status.Uplink <= 0 || status.Downlink <= 0 {
+		t.Errorf("счётчики молчат на профиле из подписки: uplink=%d downlink=%d, теги=%v",
+			status.Uplink, status.Downlink, xray.StatsTags(profiles[0]))
+	}
+}
+
+// waitForTraffic ждёт, пока оба счётчика станут ненулевыми.
+func waitForTraffic(e *Engine, limit time.Duration) Status {
+	deadline := time.Now().Add(limit)
+	var status Status
+	for time.Now().Before(deadline) {
+		status = e.Status()
+		if status.Uplink > 0 && status.Downlink > 0 {
+			return status
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return status
 }

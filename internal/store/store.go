@@ -20,9 +20,9 @@ const DefaultBaseURL = "https://cabinet.darkprincepanel.ru"
 // системно, поэтому кладёт всё в /var; запущенный пользователем (это законно
 // для режима «прокси», привилегий он не требует) — в свой каталог.
 type Paths struct {
-	StateDir string
-	StateFile string
-	Socket   string
+	StateDir   string
+	StateFile  string
+	Socket     string
 	GeodataDir string
 }
 
@@ -31,7 +31,7 @@ func ResolvePaths() Paths {
 	if os.Geteuid() == 0 {
 		return Paths{
 			StateDir:   "/var/lib/darkprince-vpn",
-			StateFile: "/var/lib/darkprince-vpn/state.json",
+			StateFile:  "/var/lib/darkprince-vpn/state.json",
 			Socket:     "/run/darkprince-vpn.sock",
 			GeodataDir: "/var/lib/darkprince-vpn/geodata",
 		}
@@ -52,7 +52,7 @@ func ResolvePaths() Paths {
 	}
 	return Paths{
 		StateDir:   dir,
-		StateFile: filepath.Join(dir, "state.json"),
+		StateFile:  filepath.Join(dir, "state.json"),
 		Socket:     filepath.Join(runtime, "darkprince-vpn.sock"),
 		GeodataDir: filepath.Join(dir, "geodata"),
 	}

@@ -8,6 +8,7 @@ require (
 	github.com/xjasonlyu/tun2socks/v2 v2.7.0
 	github.com/xtls/xray-core v1.260327.0
 	golang.org/x/net v0.57.0
+	golang.org/x/term v0.45.0
 	gvisor.dev/gvisor v0.0.0-20260701204157-69c2d17aea96
 )
 

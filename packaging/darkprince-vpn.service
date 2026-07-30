@@ -1,0 +1,25 @@
+[Unit]
+Description=DarkPrince VPN
+Documentation=https://github.com/DarkPrince922/DarkPrinceVpnLinux
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/darkprince daemon
+Restart=on-failure
+RestartSec=3
+
+# Режим tun поднимает интерфейс и правит маршруты — этого требует CAP_NET_ADMIN.
+# Остальные привилегии службе не нужны, поэтому их не выдаём.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+StateDirectory=darkprince-vpn
+RuntimeDirectory=darkprince-vpn
+
+[Install]
+WantedBy=multi-user.target

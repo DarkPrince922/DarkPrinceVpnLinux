@@ -3,6 +3,7 @@ package engine
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -10,8 +11,8 @@ import (
 
 	"github.com/darkprince922/darkprincevpnlinux/internal/xray"
 	xcore "github.com/xtls/xray-core/core"
-	"github.com/xtls/xray-core/infra/conf/serial"
 	xstats "github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/infra/conf/serial"
 
 	_ "github.com/xtls/xray-core/main/distro/all"
 )
@@ -123,6 +124,11 @@ func (e *Engine) Start(profile xray.Profile, opts Options) error {
 
 	e.instance = instance
 	e.stats, _ = instance.GetFeature(xstats.ManagerType()).(xstats.Manager)
+	if e.stats == nil {
+		// не повод падать: туннель работает и без счётчиков, но молчаливый
+		// ноль в статусе выглядит как поломка, поэтому говорим об этом вслух
+		log.Printf("статистика недоступна: ядро не отдало менеджер счётчиков")
+	}
 	e.statsTags = xray.StatsTags(profile)
 	e.mode = opts.Mode
 	e.server = profile.Label()
