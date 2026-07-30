@@ -88,6 +88,8 @@ jobs:
 
           Статические бинарники, зависимостей нет. Ядро Xray внутри.
 
+          **Установка**
+
           \`\`\`bash
           tar -xzf darkprince-vpn-$VERSION-linux-amd64.tar.gz
           cd darkprince-vpn-$VERSION-linux-amd64
@@ -96,6 +98,18 @@ jobs:
           sudo ./download-geodata.sh
           sudo systemctl enable --now darkprince-vpn
           \`\`\`
+
+          На Arch удобнее собрать пакет: \`cd packaging && makepkg -si\`.
+
+          **Пользоваться**
+
+          \`\`\`bash
+          sudo darkprince gui        # интерфейс в браузере
+          sudo darkprince login      # или из консоли
+          sudo darkprince connect --mode tun
+          \`\`\`
+
+          Режим \`proxy\` привилегий не требует, \`tun\` заворачивает весь трафик системы.
 
           Проверить контрольные суммы: \`sha256sum -c SHA256SUMS\`
           EOF
