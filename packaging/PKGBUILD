@@ -1,0 +1,57 @@
+# Maintainer: DarkPrince922
+#
+# Сборка пакета из локального дерева исходников:
+#   cd packaging && makepkg -si
+#
+# Так пакет попадает под учёт pacman: файлы принадлежат ему, обновление и
+# удаление обычные, ничего не остаётся забытым в /usr/local.
+pkgname=darkprince-vpn
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="VPN-клиент DarkPrince: ядро Xray, режимы proxy и tun"
+arch=('x86_64' 'aarch64')
+url="https://github.com/DarkPrince922/DarkPrinceVpnLinux"
+license=('custom')
+depends=('glibc')
+makedepends=('go>=1.26' 'git')
+backup=()
+install=darkprince-vpn.install
+source=()
+sha256sums=()
+
+build() {
+    cd "$startdir/.."
+
+    # CGO не нужен: и ядро, и мост TUN — чистый Go. Бинарник получается
+    # статическим и не ломается при обновлении glibc в системе.
+    export CGO_ENABLED=0
+    export GOFLAGS="-trimpath -mod=readonly -modcacherw"
+
+    go build -ldflags "-s -w -X main.version=${pkgver}" -o "$srcdir/darkprince" .
+}
+
+check() {
+    cd "$startdir/.."
+    # Тесты, которым нужен root, при сборке пакета пропускаются: makepkg
+    # намеренно работает без привилегий, и это правильно.
+    go test ./... -count=1
+}
+
+package() {
+    cd "$startdir/.."
+
+    install -Dm755 "$srcdir/darkprince" "$pkgdir/usr/bin/darkprince"
+
+    # В пакете бинарник лежит в /usr/bin, а юнит в репозитории написан под
+    # ручную установку в /usr/local/bin — поправляем путь на лету.
+    sed 's|/usr/local/bin/darkprince|/usr/bin/darkprince|' \
+        packaging/darkprince-vpn.service \
+        > "$srcdir/darkprince-vpn.service"
+    install -Dm644 "$srcdir/darkprince-vpn.service" \
+        "$pkgdir/usr/lib/systemd/system/darkprince-vpn.service"
+
+    install -Dm755 scripts/download-geodata.sh \
+        "$pkgdir/usr/share/darkprince-vpn/download-geodata.sh"
+    install -Dm644 README.md \
+        "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

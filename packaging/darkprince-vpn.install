@@ -1,0 +1,39 @@
+post_install() {
+    cat <<'MSG'
+
+DarkPrince VPN установлен.
+
+Дальше:
+
+  1. Геоданные — конфиги панели обычно содержат правила geoip:/geosite:,
+     и без этих файлов ядро откажется стартовать целиком:
+
+       sudo /usr/share/darkprince-vpn/download-geodata.sh
+
+  2. Служба:
+
+       sudo systemctl enable --now darkprince-vpn
+
+  3. Вход и подключение:
+
+       sudo darkprince login
+       sudo darkprince refresh
+       sudo darkprince connect --mode tun
+
+Режим proxy привилегий не требует: демон можно запустить и от своего
+пользователя (darkprince daemon), тогда состояние ляжет в ~/.local/state.
+
+MSG
+}
+
+post_upgrade() {
+    echo "Перезапустите службу: sudo systemctl restart darkprince-vpn"
+}
+
+pre_remove() {
+    systemctl disable --now darkprince-vpn 2>/dev/null || true
+}
+
+post_remove() {
+    echo "Состояние и геоданные остались в /var/lib/darkprince-vpn — удалите вручную, если не нужны."
+}

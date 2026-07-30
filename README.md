@@ -46,7 +46,32 @@ go build -o darkprince .
 sudo install -m755 darkprince /usr/local/bin/
 ```
 
-## Установка службы
+## Установка на Arch
+
+Правильный способ — собрать пакет, тогда файлы попадают под учёт pacman и
+удаляются одной командой:
+
+```bash
+sudo pacman -S --needed go git
+git clone https://github.com/DarkPrince922/DarkPrinceVpnLinux
+cd DarkPrinceVpnLinux/packaging
+makepkg -si
+```
+
+Если в репозиториях Arch версия Go окажется старше 1.26, ничего делать не
+нужно: Go сам скачает нужный тулчейн, это штатное поведение.
+
+Дальше пакет подскажет оставшиеся шаги — геоданные и запуск службы:
+
+```bash
+sudo /usr/share/darkprince-vpn/download-geodata.sh
+sudo systemctl enable --now darkprince-vpn
+```
+
+Удаление: `sudo pacman -Rns darkprince-vpn` (состояние в `/var/lib/darkprince-vpn`
+остаётся, уберите вручную, если не нужно).
+
+## Установка службы вручную
 
 ```bash
 sudo install -m644 packaging/darkprince-vpn.service /etc/systemd/system/

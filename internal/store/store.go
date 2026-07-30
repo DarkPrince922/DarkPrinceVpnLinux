@@ -29,10 +29,14 @@ type Paths struct {
 // ResolvePaths выбирает каталоги под текущего пользователя.
 func ResolvePaths() Paths {
 	if os.Geteuid() == 0 {
+		// Каталоги совпадают с StateDirectory= и RuntimeDirectory= в
+		// systemd-юните. Под ProtectSystem=strict только они и остаются
+		// доступными для записи, поэтому сокет обязан лежать внутри
+		// /run/darkprince-vpn, а не рядом с ним.
 		return Paths{
 			StateDir:   "/var/lib/darkprince-vpn",
 			StateFile:  "/var/lib/darkprince-vpn/state.json",
-			Socket:     "/run/darkprince-vpn.sock",
+			Socket:     "/run/darkprince-vpn/daemon.sock",
 			GeodataDir: "/var/lib/darkprince-vpn/geodata",
 		}
 	}
