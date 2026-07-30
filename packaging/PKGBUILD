@@ -6,13 +6,17 @@
 # Так пакет попадает под учёт pacman: файлы принадлежат ему, обновление и
 # удаление обычные, ничего не остаётся забытым в /usr/local.
 pkgname=darkprince-vpn
-pkgver=0.1.0
+# Версию поднимать вместе с релизом: она уходит в бинарник через -ldflags,
+# и разошедшееся значение заставило бы `darkprince version` врать.
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="VPN-клиент DarkPrince: ядро Xray, режимы proxy и tun"
 arch=('x86_64' 'aarch64')
 url="https://github.com/DarkPrince922/DarkPrinceVpnLinux"
 license=('custom')
-depends=('glibc')
+# Зависимостей нет: сборка идёт с CGO_ENABLED=0, бинарник статический и не
+# обращается даже к libc.
+depends=()
 makedepends=('go>=1.26' 'git')
 backup=()
 install=darkprince-vpn.install
