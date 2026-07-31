@@ -72,6 +72,9 @@ cd DarkPrinceVpnLinux/packaging
 makepkg -si
 ```
 
+Пакет собирается из этого же клона, а не качает архив по тегу: собирается
+ровно тот код, который лежит у вас, и ждать релиза не нужно.
+
 Зависимости: `webkit2gtk-4.1`, `libayatana-appindicator`, `polkit`, `iproute2`.
 Ядро Xray и мост tun2socks скачиваются при сборке — в репозитории их нет.
 

@@ -18,30 +18,33 @@ depends=('webkit2gtk-4.1' 'libayatana-appindicator' 'polkit' 'iproute2' 'gtk3')
 makedepends=('rust' 'cargo' 'pkgconf' 'curl' 'unzip')
 optdepends=('gsettings-desktop-schemas: режим системного прокси в GNOME')
 
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+# Исходники берём из клона, в котором лежит сам PKGBUILD, а не качаем
+# архив по тегу. Так «склонировал и собрал» работает сразу, ещё до всякого
+# релиза, и собирается ровно тот код, который человек видит у себя.
+source=()
+sha256sums=()
 
-_srcdir="DarkPrinceVpnLinux-$pkgver"
+# корень репозитория: makepkg запускается из packaging/
+_root() { cd "$startdir/.." && pwd; }
 
 prepare() {
-    cd "$srcdir/$_srcdir"
-    bash scripts/fetch-cores.sh src-tauri/core
+    bash "$(_root)/scripts/fetch-cores.sh" "$(_root)/src-tauri/core"
 }
 
 build() {
-    cd "$srcdir/$_srcdir/src-tauri"
+    cd "$(_root)/src-tauri"
     # Собираем только бинарник: .deb и AppImage тут не нужны,
     # раскладкой файлов занимается сам PKGBUILD.
     cargo build --release --locked
 }
 
 check() {
-    cd "$srcdir/$_srcdir/engine"
-    cargo test --release --locked
+    cd "$(_root)/engine"
+    cargo test --release
 }
 
 package() {
-    cd "$srcdir/$_srcdir"
+    cd "$(_root)"
 
     install -Dm755 src-tauri/target/release/darkprince-vpn \
         "$pkgdir/usr/bin/darkprince-vpn"
@@ -49,9 +52,13 @@ package() {
     # ядро и мост живут рядом с приложением: движок ищет их в core/
     install -Dm755 src-tauri/core/xray      "$pkgdir/usr/lib/$pkgname/core/xray"
     install -Dm755 src-tauri/core/tun2socks "$pkgdir/usr/lib/$pkgname/core/tun2socks"
+    # базы роутинга необязательны: «или true» здесь не украшение — makepkg
+    # выполняет функции с set -e, и цикл, кончившийся неудачной проверкой,
+    # оборвал бы упаковку целиком
     for dat in geoip.dat geosite.dat; do
-        [ -f "src-tauri/core/$dat" ] &&
+        if [ -f "src-tauri/core/$dat" ]; then
             install -Dm644 "src-tauri/core/$dat" "$pkgdir/usr/lib/$pkgname/core/$dat"
+        fi
     done
 
     install -Dm644 packaging/darkprince-vpn.desktop \

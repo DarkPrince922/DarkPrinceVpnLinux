@@ -71,7 +71,7 @@ jobs:
             echo "**Arch Linux** — сборка из исходников, файлы попадают под учёт pacman:"
             echo
             echo '```'
-            echo "git clone --branch $TAG https://github.com/DarkPrince922/DarkPrinceVpnLinux"
+            echo "git clone https://github.com/DarkPrince922/DarkPrinceVpnLinux"
             echo "cd DarkPrinceVpnLinux/packaging && makepkg -si"
             echo '```'
             echo
