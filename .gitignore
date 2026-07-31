@@ -1,8 +1,15 @@
-darkprince
-dist/
+target/
+node_modules/
 *.log
+
+# схемы прав, которые Tauri создаёт при сборке
+src-tauri/gen/
+
+# ядро и мост скачиваются сборкой, в репозитории им не место
+src-tauri/core/
 
 # рабочие каталоги и результат makepkg — появляются при сборке пакета в дереве
 packaging/pkg/
 packaging/src/
 packaging/*.pkg.tar.*
+packaging/*.tar.gz

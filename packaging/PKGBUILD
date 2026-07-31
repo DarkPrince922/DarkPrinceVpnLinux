@@ -1,65 +1,64 @@
-# Maintainer: DarkPrince922
+# Maintainer: DarkPrince VPN
 #
-# Сборка пакета из локального дерева исходников:
-#   cd packaging && makepkg -si
-#
-# Так пакет попадает под учёт pacman: файлы принадлежат ему, обновление и
-# удаление обычные, ничего не остаётся забытым в /usr/local.
+# Собирает приложение из исходников и кладёт файлы под учёт pacman.
+# Ядро Xray и мост tun2socks скачиваются на этапе prepare(): в репозитории
+# их нет, они весят десятки мегабайт и обновляются отдельно от приложения.
+
 pkgname=darkprince-vpn
-# Версию поднимать вместе с релизом: она уходит в бинарник через -ldflags,
-# и разошедшееся значение заставило бы `darkprince version` врать.
-pkgver=0.2.0
+pkgver=1.0.0
 pkgrel=1
-pkgdesc="VPN-клиент DarkPrince: ядро Xray, режимы proxy и tun"
+pkgdesc="Клиент DarkPrince VPN: подписка из кабинета, системный прокси и полный туннель"
 arch=('x86_64' 'aarch64')
 url="https://github.com/DarkPrince922/DarkPrinceVpnLinux"
-license=('custom')
-# Зависимостей нет: сборка идёт с CGO_ENABLED=0, бинарник статический и не
-# обращается даже к libc.
-depends=()
-makedepends=('go>=1.26' 'git')
-backup=()
-install=darkprince-vpn.install
-source=()
-sha256sums=()
+license=('MIT')
+
+# webkit2gtk — окно приложения, appindicator — значок в трее,
+# polkit — запрос прав на туннель, iproute2 — сами маршруты
+depends=('webkit2gtk-4.1' 'libayatana-appindicator' 'polkit' 'iproute2' 'gtk3')
+makedepends=('rust' 'cargo' 'pkgconf' 'curl' 'unzip')
+optdepends=('gsettings-desktop-schemas: режим системного прокси в GNOME')
+
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+_srcdir="DarkPrinceVpnLinux-$pkgver"
+
+prepare() {
+    cd "$srcdir/$_srcdir"
+    bash scripts/fetch-cores.sh src-tauri/core
+}
 
 build() {
-    cd "$startdir/.."
-
-    # CGO не нужен: и ядро, и мост TUN — чистый Go. Бинарник получается
-    # статическим и не ломается при обновлении glibc в системе.
-    export CGO_ENABLED=0
-    export GOFLAGS="-trimpath -mod=readonly -modcacherw"
-
-    go build -ldflags "-s -w -X main.version=${pkgver}" -o "$srcdir/darkprince" .
+    cd "$srcdir/$_srcdir/src-tauri"
+    # Собираем только бинарник: .deb и AppImage тут не нужны,
+    # раскладкой файлов занимается сам PKGBUILD.
+    cargo build --release --locked
 }
 
 check() {
-    cd "$startdir/.."
-
-    # Именно ./internal/..., а не ./...: сборка идёт прямо в дереве
-    # репозитория, а makepkg держит свои каталоги pkg и src внутри
-    # packaging/ и закрывает их от чтения. Шаблон ./... полез бы туда и
-    # упал с "permission denied", хотя к коду это отношения не имеет.
-    # Все тесты лежат под internal/, так что покрытие от этого не меняется.
-    go test ./internal/... -count=1
+    cd "$srcdir/$_srcdir/engine"
+    cargo test --release --locked
 }
 
 package() {
-    cd "$startdir/.."
+    cd "$srcdir/$_srcdir"
 
-    install -Dm755 "$srcdir/darkprince" "$pkgdir/usr/bin/darkprince"
+    install -Dm755 src-tauri/target/release/darkprince-vpn \
+        "$pkgdir/usr/bin/darkprince-vpn"
 
-    # В пакете бинарник лежит в /usr/bin, а юнит в репозитории написан под
-    # ручную установку в /usr/local/bin — поправляем путь на лету.
-    sed 's|/usr/local/bin/darkprince|/usr/bin/darkprince|' \
-        packaging/darkprince-vpn.service \
-        > "$srcdir/darkprince-vpn.service"
-    install -Dm644 "$srcdir/darkprince-vpn.service" \
-        "$pkgdir/usr/lib/systemd/system/darkprince-vpn.service"
+    # ядро и мост живут рядом с приложением: движок ищет их в core/
+    install -Dm755 src-tauri/core/xray      "$pkgdir/usr/lib/$pkgname/core/xray"
+    install -Dm755 src-tauri/core/tun2socks "$pkgdir/usr/lib/$pkgname/core/tun2socks"
+    for dat in geoip.dat geosite.dat; do
+        [ -f "src-tauri/core/$dat" ] &&
+            install -Dm644 "src-tauri/core/$dat" "$pkgdir/usr/lib/$pkgname/core/$dat"
+    done
 
-    install -Dm755 scripts/download-geodata.sh \
-        "$pkgdir/usr/share/darkprince-vpn/download-geodata.sh"
-    install -Dm644 README.md \
-        "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 packaging/darkprince-vpn.desktop \
+        "$pkgdir/usr/share/applications/$pkgname.desktop"
+    install -Dm644 src-tauri/icons/128x128.png \
+        "$pkgdir/usr/share/icons/hicolor/128x128/apps/$pkgname.png"
+    install -Dm644 src-tauri/icons/32x32.png \
+        "$pkgdir/usr/share/icons/hicolor/32x32/apps/$pkgname.png"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

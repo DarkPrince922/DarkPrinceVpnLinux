@@ -1,4 +1,10 @@
-name: Release
+# Релиз: собирает приложение и выкладывает готовые файлы в Releases.
+#
+# Запустить можно двумя способами — повесить тег вида v1.0.0 либо нажать
+# «Run workflow» и ввести версию руками. Во втором случае тег создаётся самим
+# прогоном, из коммита, на котором его запустили.
+
+name: Релиз
 
 on:
   push:
@@ -6,130 +12,93 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия релиза (например 1.0.0)"
+        description: "Версия, например v1.0.0"
         required: true
 
 permissions:
   contents: write
 
-# начатый релиз не прерываем: иначе можно получить полузалитые файлы
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   release:
-    runs-on: ubuntu-latest
+    name: Собрать и опубликовать
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.event.inputs.version || github.ref_name }}
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          # свежий xray-core требует Go 1.26
-          go-version: "1.26"
-          cache: true
+          workspaces: src-tauri
 
-      - name: Определить версию
-        id: version
+      - name: Системные зависимости
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Версия релиза: $VERSION"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf desktop-file-utils
 
-      - name: Тесты
-        # TUN-тесты без root пропускаются, а пропущенный тест — не пройденный;
-        # выпускать релиз на такой проверке нельзя
+      - name: Скачать ядро и мост
+        run: bash scripts/fetch-cores.sh src-tauri/core
+
+      - name: Собрать
+        working-directory: src-tauri
+        run: npx --yes @tauri-apps/cli@^2 build
+
+      - name: Подготовить файлы
+        id: files
         run: |
-          sudo -E env "PATH=$PATH" DARKPRINCE_REQUIRE_ROOT_TESTS=1 \
-            go test ./... -count=1
+          version="${TAG#v}"
+          mkdir -p out
 
-      - name: Собрать под все архитектуры
+          deb=$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)
+          app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+          [ -n "$deb" ] || { echo "не собрался .deb"; exit 1; }
+          [ -n "$app" ] || { echo "не собрался AppImage"; exit 1; }
+
+          cp "$deb" "out/DarkPrinceVPN-$version-amd64.deb"
+          cp "$app" "out/DarkPrinceVPN-$version-x86_64.AppImage"
+          chmod +x "out/DarkPrinceVPN-$version-x86_64.AppImage"
+
+          cd out
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+          {
+            echo "Клиент DarkPrince VPN для Linux."
+            echo
+            echo "**Arch Linux** — сборка из исходников, файлы попадают под учёт pacman:"
+            echo
+            echo '```'
+            echo "git clone --branch $TAG https://github.com/DarkPrince922/DarkPrinceVpnLinux"
+            echo "cd DarkPrinceVpnLinux/packaging && makepkg -si"
+            echo '```'
+            echo
+            echo "**Любой дистрибутив** — AppImage, ничего ставить не нужно:"
+            echo
+            echo '```'
+            echo "chmod +x DarkPrinceVPN-$version-x86_64.AppImage"
+            echo "./DarkPrinceVPN-$version-x86_64.AppImage"
+            echo '```'
+            echo
+            echo "**Debian и Ubuntu** — пакет .deb."
+            echo
+            echo "Для режима «весь трафик» нужны polkit и iproute2 — в большинстве"
+            echo "систем они уже стоят. Режим системного прокси работает без них."
+            echo
+            echo "Контрольные суммы:"
+            echo
+            echo '```'
+            cat checksums.txt
+            echo '```'
+          } > ../notes.md
+
+      - name: Опубликовать
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          mkdir -p dist
-
-          for arch in amd64 arm64; do
-            echo "── linux/$arch ──"
-            # CGO не нужен: и ядро, и мост — чистый Go, поэтому бинарник
-            # статический и не зависит от версии libc в системе пользователя
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-              go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/darkprince" .
-
-            stage="darkprince-vpn-$VERSION-linux-$arch"
-            mkdir -p "$stage"
-            cp dist/darkprince "$stage/"
-            cp README.md "$stage/"
-            cp packaging/darkprince-vpn.service "$stage/"
-            cp scripts/download-geodata.sh "$stage/"
-
-            tar -czf "dist/$stage.tar.gz" "$stage"
-            rm -rf "$stage" dist/darkprince
-          done
-
-          cd dist
-          sha256sum *.tar.gz > SHA256SUMS
-          ls -lh
-          cat SHA256SUMS
-
-      - name: Создать релиз
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          NOTES=$(cat <<EOF
-          Версия $VERSION
-
-          Статические бинарники, зависимостей нет. Ядро Xray внутри.
-
-          **Установка**
-
-          \`\`\`bash
-          tar -xzf darkprince-vpn-$VERSION-linux-amd64.tar.gz
-          cd darkprince-vpn-$VERSION-linux-amd64
-          sudo install -m755 darkprince /usr/local/bin/
-          sudo install -m644 darkprince-vpn.service /etc/systemd/system/
-          sudo ./download-geodata.sh
-          sudo systemctl enable --now darkprince-vpn
-          \`\`\`
-
-          На Arch удобнее собрать пакет: \`cd packaging && makepkg -si\`.
-
-          **Пользоваться**
-
-          \`\`\`bash
-          sudo darkprince gui        # интерфейс в браузере
-          sudo darkprince login      # или из консоли
-          sudo darkprince connect --mode tun
-          \`\`\`
-
-          Режим \`proxy\` привилегий не требует, \`tun\` заворачивает весь трафик системы.
-
-          Проверить контрольные суммы: \`sha256sum -c SHA256SUMS\`
-          EOF
-          )
-          NOTES=$(echo "$NOTES" | sed 's/^          //')
-
-          if ! gh release create "v$VERSION" dist/*.tar.gz dist/SHA256SUMS \
-                --title "DarkPrince VPN $VERSION" \
-                --notes "$NOTES" \
-                --repo "${{ github.repository }}"; then
-            # релиз уже существует — обновляем файлы и описание
-            gh release upload "v$VERSION" dist/*.tar.gz dist/SHA256SUMS \
-              --clobber --repo "${{ github.repository }}"
-            gh release edit "v$VERSION" \
-              --title "DarkPrince VPN $VERSION" \
-              --notes "$NOTES" \
-              --repo "${{ github.repository }}"
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ steps.version.outputs.version }}
-          path: dist/
+          gh release create "$TAG" out/* \
+            --target "${{ github.sha }}" \
+            --title "DarkPrince VPN $TAG" \
+            --notes-file notes.md

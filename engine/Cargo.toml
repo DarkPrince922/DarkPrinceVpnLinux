@@ -1,0 +1,11 @@
+[package]
+name = "dp-engine"
+version = "1.0.0"
+edition = "2021"
+
+# Движок намеренно не зависит от Tauri: так он проверяется тестами отдельно
+# от сборки приложения. Всё общение с системой идёт через её же программы —
+# ip, resolvectl, gsettings — и через запуск ядра и моста.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

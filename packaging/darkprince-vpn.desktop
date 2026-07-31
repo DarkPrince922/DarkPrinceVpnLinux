@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=DarkPrince VPN
+Comment=Подключение к DarkPrince VPN
+Comment[en]=Connect to DarkPrince VPN
+Exec=darkprince-vpn
+Icon=darkprince-vpn
+Terminal=false
+Categories=Network;Security;
+Keywords=VPN;proxy;xray;
+StartupWMClass=DarkPrince VPN
