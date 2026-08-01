@@ -12,7 +12,16 @@
 
 use serde::Serialize;
 use std::path::Path;
+use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
+
+/// Сколько уже скачано. Уходит в окно событием `update-progress`.
+#[derive(Serialize, Clone)]
+struct Progress {
+    downloaded: u64,
+    /// Ноль означает «размер неизвестен» — полосу тогда не рисуем.
+    total: u64,
+}
 
 /// Как приложение попало в систему.
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -134,8 +143,26 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
     dp_engine::sys::log(&format!("обновления: ставим {}", update.version));
 
+    // Качаем сами и показываем, сколько уже скачано: файл на сотню мегабайт
+    // без полосы выглядит как зависшее приложение.
+    let window = app.clone();
+    let mut downloaded: u64 = 0;
+
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = window.emit(
+                    "update-progress",
+                    Progress {
+                        downloaded,
+                        // сервер не обязан говорить размер заранее
+                        total: total.unwrap_or(0),
+                    },
+                );
+            },
+            || {},
+        )
         .await
         .map_err(|error| format!("не удалось поставить обновление: {error}"))?;
 
