@@ -22,7 +22,7 @@ jobs:
   release:
     name: Собрать и опубликовать
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       TAG: ${{ github.event.inputs.version || github.ref_name }}
     steps:
@@ -46,6 +46,45 @@ jobs:
         working-directory: src-tauri
         run: npx --yes @tauri-apps/cli@^2 build
 
+      # Пакет для pacman собирается тем же PKGBUILD, которым его собирают у
+      # себя: другой сборки для Arch не существует, и расходиться им нельзя.
+      # Отсюда контейнер — makepkg и pacman есть только в самом Arch.
+      - name: Собрать пакет для Arch
+        run: |
+          version="${TAG#v}"
+          mkdir -p arch-pkg
+          docker run --rm \
+            -v "$PWD:/src:ro" -v "$PWD/arch-pkg:/out" \
+            -e VERSION="$version" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            archlinux:base-devel bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed git
+
+              # makepkg отказывается работать от root, поэтому собираем от
+              # обычного пользователя, а pacman зовём через sudo без пароля.
+              useradd -m build
+              echo "build ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/build
+
+              # Собираем из свежего клона, а не из копии рабочего каталога:
+              # там уже лежит target/ от сборки на Ubuntu, и cargo принял бы
+              # часть тех объектов за готовые. Заодно PKGBUILD пишет в клон, а
+              # каталог прогона примонтирован только для чтения.
+              git config --global --add safe.directory /src
+              git clone --no-hardlinks /src /home/build/repo
+              chown -R build:build /home/build/repo
+
+              sudo -u build bash -euo pipefail -c "
+                cd /home/build/repo/packaging
+                # версия пакета — из тега релиза, чтобы pacman видел
+                # обновление; в репозитории остаётся значение по умолчанию
+                sed -i \"s/^pkgver=.*/pkgver=$VERSION/\" PKGBUILD
+                makepkg --syncdeps --force --noconfirm
+              "
+
+              cp /home/build/repo/packaging/*.pkg.tar.zst /out/
+              chown "$HOST_UID:$HOST_GID" /out/*.pkg.tar.zst
+            '
+          ls -lh arch-pkg
+
       - name: Подготовить файлы
         id: files
         run: |
@@ -54,11 +93,14 @@ jobs:
 
           deb=$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)
           app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+          pkg=$(find arch-pkg -name '*.pkg.tar.zst' | head -1)
           [ -n "$deb" ] || { echo "не собрался .deb"; exit 1; }
           [ -n "$app" ] || { echo "не собрался AppImage"; exit 1; }
+          [ -n "$pkg" ] || { echo "не собрался пакет для Arch"; exit 1; }
 
           cp "$deb" "out/DarkPrinceVPN-$version-amd64.deb"
           cp "$app" "out/DarkPrinceVPN-$version-x86_64.AppImage"
+          cp "$pkg" "out/DarkPrinceVPN-$version-x86_64.pkg.tar.zst"
           chmod +x "out/DarkPrinceVPN-$version-x86_64.AppImage"
 
           cd out
@@ -68,7 +110,14 @@ jobs:
           {
             echo "Клиент DarkPrince VPN для Linux."
             echo
-            echo "**Arch Linux** — сборка из исходников, файлы попадают под учёт pacman:"
+            echo "**Arch Linux** — готовый пакет, ставится и удаляется через pacman:"
+            echo
+            echo '```'
+            echo "sudo pacman -U DarkPrinceVPN-$version-x86_64.pkg.tar.zst"
+            echo '```'
+            echo
+            echo "Собран тем же PKGBUILD, что лежит в репозитории. Кому нужен"
+            echo "другой процессор или сборка из своих исходников:"
             echo
             echo '```'
             echo "git clone https://github.com/DarkPrince922/DarkPrinceVpnLinux"
