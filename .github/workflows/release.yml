@@ -9,6 +9,8 @@ name: Релиз
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths: [".github/release-version"]
   workflow_dispatch:
     inputs:
       version:
@@ -31,6 +33,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      # Изменение одного файла версии в main запускает тот же релиз, что тег
+      # или кнопка Run workflow. Так выпуск удобно запускать и с телефона.
+      - name: Определить версию
+        run: |
+          tag="$TAG"
+          if [ "$tag" = main ]; then
+            tag="$(tr -d '[:space:]' < .github/release-version)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Неверная версия: $tag"
+            exit 1
+          }
+          echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Системные зависимости
         run: |
