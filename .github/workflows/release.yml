@@ -10,7 +10,9 @@ on:
   push:
     tags: ["v*"]
     branches: [main]
-    paths: [".github/release-version"]
+    paths:
+      - ".github/release-version"
+      - ".github/release-revision"
   workflow_dispatch:
     inputs:
       version:
@@ -121,10 +123,16 @@ jobs:
 
           deb=$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)
           app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
-          pkg=$(find arch-pkg -name '*.pkg.tar.zst' | head -1)
+          # makepkg может создать ещё и крошечный пакет *-debug-*. Для
+          # релиза нужен основной пакет с приложением и ядрами.
+          pkg=$(find arch-pkg -name '*.pkg.tar.zst' ! -name '*-debug-*' | head -1)
           [ -n "$deb" ] || { echo "не собрался .deb"; exit 1; }
           [ -n "$app" ] || { echo "не собрался AppImage"; exit 1; }
           [ -n "$pkg" ] || { echo "не собрался пакет для Arch"; exit 1; }
+          [ "$(stat -c %s "$pkg")" -gt 1000000 ] || {
+            echo "пакет для Arch подозрительно мал: $pkg"
+            exit 1
+          }
 
           cp "$deb" "out/DarkPrinceVPN-$version-amd64.deb"
           cp "$app" "out/DarkPrinceVPN-$version-x86_64.AppImage"
@@ -200,7 +208,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$TAG" out/* \
-            --target "${{ github.sha }}" \
-            --title "DarkPrince VPN $TAG" \
-            --notes-file notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" \
+              --target "${{ github.sha }}" \
+              --title "DarkPrince VPN $TAG" \
+              --notes-file notes.md
+          else
+            gh release create "$TAG" out/* \
+              --target "${{ github.sha }}" \
+              --title "DarkPrince VPN $TAG" \
+              --notes-file notes.md
+          fi
