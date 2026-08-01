@@ -42,6 +42,12 @@ jobs:
       - name: Скачать ядро и мост
         run: bash scripts/fetch-cores.sh src-tauri/core
 
+      # Версия приложения должна совпасть с тегом: именно её оно сравнивает с
+      # манифестом обновлений. Отстанет — апдейтер будет предлагать одно и то
+      # же обновление по кругу.
+      - name: Проставить версию
+        run: bash scripts/set-version.sh "$TAG"
+
       - name: Собрать
         working-directory: src-tauri
         run: npx --yes @tauri-apps/cli@^2 build
@@ -57,7 +63,7 @@ jobs:
             -v "$PWD:/src:ro" -v "$PWD/arch-pkg:/out" \
             -e VERSION="$version" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             archlinux:base-devel bash -euo pipefail -c '
-              pacman -Syu --noconfirm --needed git
+              pacman -Syu --noconfirm --needed git python
 
               # makepkg отказывается работать от root, поэтому собираем от
               # обычного пользователя, а pacman зовём через sudo без пароля.
@@ -73,11 +79,11 @@ jobs:
               chown -R build:build /home/build/repo
 
               sudo -u build bash -euo pipefail -c "
-                cd /home/build/repo/packaging
-                # версия пакета — из тега релиза, чтобы pacman видел
-                # обновление; в репозитории остаётся значение по умолчанию
-                sed -i \"s/^pkgver=.*/pkgver=$VERSION/\" PKGBUILD
-                makepkg --syncdeps --force --noconfirm
+                cd /home/build/repo
+                # клон снят с коммита, а версию проставляет скрипт — в
+                # склонированном дереве её ещё нет
+                bash scripts/set-version.sh $VERSION
+                cd packaging && makepkg --syncdeps --force --noconfirm
               "
 
               cp /home/build/repo/packaging/*.pkg.tar.zst /out/
