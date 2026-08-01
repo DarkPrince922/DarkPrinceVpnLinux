@@ -18,6 +18,11 @@ depends=('webkit2gtk-4.1' 'libayatana-appindicator' 'polkit' 'iproute2' 'gtk3')
 makedepends=('rust' 'cargo' 'pkgconf' 'curl' 'unzip')
 optdepends=('gsettings-desktop-schemas: режим системного прокси в GNOME')
 
+# makepkg добавляет -flto в CFLAGS, а ring собирает нативную часть через cc
+# и затем линкует её через rust-lld. Смешение GCC LTO IR и LLVM оставляет
+# символы ring неразрешёнными. Rust LTO из Cargo.toml при этом сохраняется.
+options=('!lto')
+
 # Исходники берём из клона, в котором лежит сам PKGBUILD, а не качаем
 # архив по тегу. Так «склонировал и собрал» работает сразу, ещё до всякого
 # релиза, и собирается ровно тот код, который человек видит у себя.
