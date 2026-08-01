@@ -50,6 +50,12 @@ jobs:
 
       - name: Собрать
         working-directory: src-tauri
+        env:
+          # Ключ подписи обновлений. Пока секрета нет, сборка идёт обычным
+          # порядком, только рядом с AppImage не появится файл .sig — и шаг
+          # с манифестом ниже честно скажет, что обновления не поедут.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx --yes @tauri-apps/cli@^2 build
 
       # Пакет для pacman собирается тем же PKGBUILD, которым его собирают у
@@ -108,6 +114,31 @@ jobs:
           cp "$app" "out/DarkPrinceVPN-$version-x86_64.AppImage"
           cp "$pkg" "out/DarkPrinceVPN-$version-x86_64.pkg.tar.zst"
           chmod +x "out/DarkPrinceVPN-$version-x86_64.AppImage"
+
+          # Манифест обновлений. Адрес ведёт на наш сайт, а не на GitHub: у
+          # части пользователей он недоступен ровно тогда, когда обновление и
+          # нужно. Имя файла на сайте без версии, поэтому ссылка постоянная.
+          if [ -f "$app.sig" ]; then
+            python3 - "$app.sig" "$version" > out/linux-x86_64.json <<'PY'
+          import json, sys, datetime
+          signature = open(sys.argv[1]).read().strip()
+          print(json.dumps({
+              "version": sys.argv[2],
+              "notes": f"DarkPrince VPN {sys.argv[2]}",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc)
+                  .strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": {
+                  "linux-x86_64": {
+                      "url": "https://dprince.online/downloads/DarkPrinceVPN.AppImage",
+                      "signature": signature,
+                  }
+              },
+          }, ensure_ascii=False, indent=2))
+          PY
+            echo "манифест обновлений собран"
+          else
+            echo "::warning::Нет секрета TAURI_SIGNING_PRIVATE_KEY — подписи нет, манифест не собран, обновления до пользователей не поедут"
+          fi
 
           cd out
           sha256sum * > checksums.txt

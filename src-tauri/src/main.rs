@@ -12,6 +12,8 @@
 //! администратора целиком, здесь права спрашивает движок через polkit ровно
 //! на те команды, которым они нужны. Поэтому команды перезапуска нет.
 
+mod update;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -299,6 +301,9 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_window(app);
         }))
+        // Обновления. Ставить их сами мы можем только у AppImage — почему,
+        // написано в update.rs; проверять новую версию не мешает никому.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let core_dir = find_core_dir(app.path().resource_dir().ok());
             let data_dir = app
@@ -386,7 +391,9 @@ fn main() {
             status,
             open_url,
             quit_app,
-            http
+            http,
+            update::check_update,
+            update::install_update
         ])
         .run(tauri::generate_context!())
         .expect("не удалось запустить приложение");
