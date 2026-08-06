@@ -70,3 +70,7 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
+          # deb и AppImage вместе — больше сотни мегабайт с каждого пуша, а
+          # квота хранилища общая на весь аккаунт и держит артефакты 90 дней
+          # по умолчанию. Именно эта пара её и выедала.
+          retention-days: 7
