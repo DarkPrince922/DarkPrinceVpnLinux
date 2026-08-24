@@ -42,7 +42,11 @@ static QUITTING: AtomicBool = AtomicBool::new(false);
 struct ServerView {
     index: usize,
     name: String,
-    transport: String,
+    /// Части подписи: протокол, шифрование, транспорт. Интерфейс рисует
+    /// каждую своей меткой, поэтому отдаём списком, а не склеенной строкой.
+    transport: Vec<String>,
+    /// Подпись узла из панели Remnawave, если она там задана.
+    description: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -88,7 +92,8 @@ async fn load_subscription(
         .map(|(index, server)| ServerView {
             index,
             name: server.name.clone(),
-            transport: server.transport_label(),
+            transport: server.transport_parts(),
+            description: server.description.clone(),
         })
         .collect();
     *app.servers.lock().unwrap() = servers;
