@@ -1056,17 +1056,28 @@ async function checkUpdate() {
     const now = $("#updateNow");
     const later = $("#updateLater");
 
+    const copy = $("#updateCopy");
+    copy.classList.add("hidden");
+
     if (info.can_install) {
         $("#updateNotes").textContent = info.notes
             || "Приложение скачает и поставит обновление само.";
         now.classList.remove("hidden");
         now.onclick = () => startUpdate(now, later);
     } else if (info.command) {
-        // Пакет принадлежит пакетному менеджеру: сами не лезем, показываем чем
+        // Пакет ставился файлом, и трогать его мимо пакетного менеджера
+        // нельзя: база пакетов разойдётся с диском. Поэтому показываем
+        // команду — и даём её унести, а не только посмотреть.
         $("#updateNotes").innerHTML =
-            `Приложение установлено пакетом, поэтому обновляет его система:<br>` +
-            `<span class="mono">${info.command}</span>`;
+            "Приложение установлено пакетом. Обновите его этой командой:<br>" +
+            `<span class="mono">${escapeHtml(info.command)}</span>`;
         now.classList.add("hidden");
+        copy.classList.remove("hidden");
+        copy.textContent = "Скопировать команду";
+        copy.onclick = async () => {
+            const ok = await copyText(info.command);
+            copy.textContent = ok ? "Скопировано" : "Скопируйте вручную";
+        };
     } else {
         // сборка из исходников — сказать про версию можно, советовать нечего
         $("#updateNotes").textContent = "Приложение собрано из исходников.";
@@ -1259,4 +1270,43 @@ async function initAutostart() {
     auto.addEventListener("change", () => {
         localStorage.setItem("dp_autoconnect", auto.checked ? "1" : "0");
     });
+}
+
+/// Текст в буфер обмена.
+///
+/// Два пути намеренно: в окне приложения адрес не https, и часть движков
+/// считает такой контекст небезопасным — тогда navigator.clipboard просто
+/// отсутствует. Старый execCommand в WebKitGTK и WebView2 работает и там.
+async function copyText(text) {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (error) {
+        // молча переходим к запасному пути
+    }
+    try {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(area);
+        return ok;
+    } catch (error) {
+        return false;
+    }
+}
+
+/// Экранирование для вставки в innerHTML. Команда приходит из приложения, а
+/// не из сети, но собирать разметку конкатенацией без экранирования — привычка,
+/// которая однажды подведёт.
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[ch]);
 }

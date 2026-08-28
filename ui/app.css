@@ -685,11 +685,17 @@ button.danger:hover { border-color: var(--danger); }
     border: 1px solid var(--accent-line);
 }
 
-/* команда пакетного менеджера длинная — пусть переносится, а не режет окно */
+/* команда пакетного менеджера длинная — пусть переносится, а не режет окно.
+   Выделение включаем обратно: на всём интерфейсе оно снято, а команду надо
+   как-то унести в терминал — кнопкой или мышью, на выбор. */
 #updateNotes .mono {
     display: inline-block;
     margin-top: 6px;
     word-break: break-word;
+    white-space: pre-wrap;
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: text;
 }
 
 .mono {

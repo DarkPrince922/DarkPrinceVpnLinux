@@ -37,10 +37,22 @@ pub enum InstallKind {
 
 impl InstallKind {
     /// Команда, которой пользователь обновится сам.
+    ///
+    /// Скачиваем и ставим одной строкой, а не отправляем в пакетный менеджер
+    /// за обновлением. Пакет ставится файлом, и для pacman он чужой: не
+    /// принадлежит ни одному репозиторию, поэтому `-Syu` не увидит его
+    /// никогда, а `-Syu darkprince-vpn` ещё и ответит «target not found» —
+    /// пакета с таким именем нет ни в репозиториях, ни в AUR. С apt то же
+    /// самое, плюс путь `./DarkPrinceVPN.deb` подразумевал, что файл уже
+    /// лежит в текущем каталоге.
     fn command(self) -> Option<&'static str> {
         match self {
-            InstallKind::Pacman => Some("sudo pacman -Syu darkprince-vpn"),
-            InstallKind::Deb => Some("sudo apt install ./DarkPrinceVPN.deb"),
+            InstallKind::Pacman => Some(
+                "curl -fLO https://dprince.online/downloads/DarkPrinceVPN.pkg.tar.zst \\\n  && sudo pacman -U DarkPrinceVPN.pkg.tar.zst",
+            ),
+            InstallKind::Deb => Some(
+                "curl -fLO https://dprince.online/downloads/DarkPrinceVPN.deb \\\n  && sudo apt install ./DarkPrinceVPN.deb",
+            ),
             _ => None,
         }
     }
