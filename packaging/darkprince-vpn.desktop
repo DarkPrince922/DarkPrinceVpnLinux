@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=DarkPrince VPN
+Name=DPrince
 Comment=Подключение к DarkPrince VPN
 Comment[en]=Connect to DarkPrince VPN
 Exec=darkprince-vpn
