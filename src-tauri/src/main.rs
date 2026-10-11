@@ -116,6 +116,19 @@ async fn connect(index: usize, tun: bool, app: TauriState<'_, App>) -> Result<()
     }
 }
 
+/// Ходит ли трафик через подключение. Замок движка держим только на миг —
+/// узнать порт: сама проверка длится секунды, и всё это время окно не
+/// должно ждать ответа на «статус».
+#[tauri::command]
+async fn probe(app: TauriState<'_, App>) -> Result<bool, String> {
+    let Some(port) = app.vpn.lock().unwrap().http_port() else {
+        return Ok(false);
+    };
+    tauri::async_runtime::spawn_blocking(move || dp_engine::probe(port))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn disconnect(app: TauriState<'_, App>) -> Result<(), String> {
     let vpn = Arc::clone(&app.vpn);
@@ -499,6 +512,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_subscription,
             connect,
+            probe,
             disconnect,
             status,
             ping_servers,

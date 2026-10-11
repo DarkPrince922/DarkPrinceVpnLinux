@@ -13,6 +13,18 @@
 //! приложением. Через `pkexec` выполняется только то, что действительно
 //! требует прав: создание интерфейса и правка маршрутов. Пароль спрашивается
 //! один раз на подключение, а не на каждую команду.
+//!
+//! Про маршруты. Маршрут по умолчанию из основной таблицы не трогаем вовсе:
+//! трафик в туннель уводится отдельной таблицей и правилами (как делает
+//! wg-quick), а адреса серверов правилом отправляются в основную таблицу —
+//! то есть по живому маршруту системы, каким бы он ни был сейчас. Раньше до
+//! сервера прокладывался маршрут через конкретный шлюз, и при смене сети
+//! (другой Wi-Fi, кабель) он пропадал: трафик ядра уходил в собственный
+//! туннель, интернет пропадал до переподключения. Теперь смена сети
+//! подхватывается сама — без нового запроса пароля.
+//!
+//! IPv6 уводится в туннель так же, если он в системе есть. Без этого
+//! сайты с IPv6 открывались мимо VPN, с настоящим адресом.
 
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -25,16 +37,23 @@ use crate::sys;
 pub const ADAPTER: &str = "dpvpn0";
 const ADDRESS: &str = "198.18.0.1";
 const MASK: &str = "24";
+/// Адрес туннеля в IPv6 — из частного диапазона, наружу не виден.
+const ADDRESS6: &str = "fd66:6470:7276::1";
+/// Таблица маршрутов туннеля и приоритеты правил. Номера свои, чтобы не
+/// задеть чужие правила; по ним же правила и убираются.
+const TABLE: &str = "7276";
+const PREF_SERVERS: u32 = 7270;
+const PREF_LOCAL: u32 = 7271;
+const PREF_TUNNEL: u32 = 7272;
 
 pub struct Tunnel {
     process: Option<Child>,
-    server_routes: Vec<String>,
     up: bool,
 }
 
 impl Tunnel {
     pub fn new() -> Self {
-        Self { process: None, server_routes: Vec::new(), up: false }
+        Self { process: None, up: false }
     }
 
     pub fn start(
@@ -64,21 +83,27 @@ impl Tunnel {
             .ok_or("не удалось определить основной шлюз — проверьте подключение к сети")?;
         sys::log(&format!("шлюз: {} через {}", gateway.via, gateway.dev));
 
-        let addresses = resolve(servers);
-        if addresses.is_empty() {
+        let (v4, v6) = resolve(servers);
+        if v4.is_empty() && v6.is_empty() {
             return Err("не удалось определить адрес сервера. Без отдельного маршрута до него \
 весь трафик, включая трафик самого ядра, ушёл бы в туннель и соединение зациклилось бы."
                 .into());
         }
+        let ipv6 = has_ipv6_route();
+        sys::log(&format!(
+            "серверы: {v4:?} {v6:?}; IPv6 {}",
+            if ipv6 { "есть — тоже в туннель" } else { "в системе не настроен" }
+        ));
 
         // Всё, что требует прав, — одним заходом: один запрос пароля.
-        let script = bring_up_script(&addresses, &gateway);
+        let script = bring_up_script(&v4, &v6, ipv6);
         if !elevated(&script) {
+            // мог успеть подняться интерфейс или часть правил — убираем
+            elevated(&tear_down_script());
             return Err("не удалось поднять туннель: система отказала в правах. \
 Если окно запроса пароля не появилось, проверьте, что служба polkit запущена."
                 .into());
         }
-        self.server_routes = addresses;
         self.up = true;
 
         // Мост открывает уже готовый интерфейс — прав ему не нужно.
@@ -115,11 +140,9 @@ impl Tunnel {
             let _ = child.wait();
         }
         if self.up {
-            let script = tear_down_script(&self.server_routes);
-            elevated(&script);
+            elevated(&tear_down_script());
             self.up = false;
         }
-        self.server_routes.clear();
     }
 
     /// Мост мог упасть на старте — тогда ждать нечего.
@@ -179,9 +202,17 @@ pub fn has_pkexec() -> bool {
     sys::run("which", &["pkexec"])
 }
 
+/// Есть ли в системе IPv6 с выходом наружу. Нет маршрута по умолчанию —
+/// нет и утечки: уводить в туннель нечего.
+fn has_ipv6_route() -> bool {
+    sys::json("ip", &["-j", "-6", "route", "show", "default"])
+        .and_then(|routes| routes.as_array().map(|list| !list.is_empty()))
+        .unwrap_or(false)
+}
+
 /// Скрипт поднятия. Одной строкой, потому что `pkexec` спрашивает пароль на
 /// каждый свой запуск: десять команд — десять запросов.
-fn bring_up_script(servers: &[String], gateway: &Gateway) -> String {
+fn bring_up_script(servers: &[String], servers6: &[String], ipv6: bool) -> String {
     let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
     let mut lines = vec![
         "set -e".to_string(),
@@ -191,27 +222,49 @@ fn bring_up_script(servers: &[String], gateway: &Gateway) -> String {
         format!("ip link set dev {ADAPTER} up"),
     ];
 
-    // 1. Маршруты до серверов мимо туннеля — обязательно раньше остальных
+    // 1. Серверы — по основной таблице, то есть по живому маршруту системы.
+    //    Обязательно раньше правила туннеля. Чёрная дыра в таблице туннеля —
+    //    на случай, когда сети нет вовсе: тогда пакеты ядра к серверу
+    //    пропадут, а не уйдут по кругу в собственный туннель.
     for ip in servers {
-        lines.push(format!("ip route replace {ip}/32 via {} dev {}", gateway.via, gateway.dev));
+        lines.push(format!("ip rule add to {ip}/32 lookup main pref {PREF_SERVERS}"));
+        lines.push(format!("ip route replace blackhole {ip}/32 table {TABLE}"));
     }
+    // 2. Локальная сеть и точные маршруты системы — как были: основная
+    //    таблица, но без её маршрута по умолчанию.
+    lines.push(format!("ip rule add lookup main suppress_prefixlength 0 pref {PREF_LOCAL}"));
+    // 3. Всё остальное — в туннель.
+    lines.push(format!("ip route replace default dev {ADAPTER} table {TABLE}"));
+    lines.push(format!("ip rule add lookup {TABLE} pref {PREF_TUNNEL}"));
 
-    // 2. Две половинки вместо маршрута по умолчанию: исходный маршрут
-    //    остаётся на месте, восстанавливать его потом не нужно.
-    lines.push(format!("ip route replace 0.0.0.0/1 dev {ADAPTER}"));
-    lines.push(format!("ip route replace 128.0.0.0/1 dev {ADAPTER}"));
+    // IPv6 — тем же порядком. Каждая команда отдельно прощает отказ: IPv6
+    // бывает выключен в ядре, и это не повод оставить человека без IPv4.
+    if ipv6 {
+        let soft = |command: String| format!("{command} 2>/dev/null || true");
+        lines.push(soft(format!("ip -6 addr add {ADDRESS6}/64 dev {ADAPTER} nodad")));
+        for ip in servers6 {
+            lines.push(soft(format!("ip -6 rule add to {ip}/128 lookup main pref {PREF_SERVERS}")));
+            lines.push(soft(format!("ip -6 route replace blackhole {ip}/128 table {TABLE}")));
+        }
+        lines.push(soft(format!(
+            "ip -6 rule add lookup main suppress_prefixlength 0 pref {PREF_LOCAL}"
+        )));
+        lines.push(soft(format!("ip -6 route replace default dev {ADAPTER} table {TABLE}")));
+        lines.push(soft(format!("ip -6 rule add lookup {TABLE} pref {PREF_TUNNEL}")));
+    }
 
     lines.join("\n")
 }
 
-fn tear_down_script(servers: &[String]) -> String {
-    let mut lines = vec![
-        // без set -e: если чего-то уже нет, уборка должна идти дальше
-        "ip route del 0.0.0.0/1 2>/dev/null || true".to_string(),
-        "ip route del 128.0.0.0/1 2>/dev/null || true".to_string(),
-    ];
-    for ip in servers {
-        lines.push(format!("ip route del {ip}/32 2>/dev/null || true"));
+/// Уборка. Правила снимаем по своим приоритетам все до одного — их могло
+/// остаться несколько от оборванных запусков.
+fn tear_down_script() -> String {
+    let mut lines = Vec::new();
+    for family in ["", "-6 "] {
+        for pref in [PREF_TUNNEL, PREF_LOCAL, PREF_SERVERS] {
+            lines.push(format!("while ip {family}rule del pref {pref} 2>/dev/null; do :; done"));
+        }
+        lines.push(format!("ip {family}route flush table {TABLE} 2>/dev/null || true"));
     }
     lines.push(format!("ip link del {ADAPTER} 2>/dev/null || true"));
     lines.join("\n")
@@ -232,11 +285,7 @@ pub fn clear_stale_state(core_dir: &Path) {
     sys::kill_our(&core_dir.join("tun2socks"));
     if sys::json("ip", &["-j", "link", "show", ADAPTER]).is_some() && has_pkexec() {
         sys::log("остался интерфейс от прошлого запуска — убираю");
-        elevated(&format!(
-            "ip route del 0.0.0.0/1 2>/dev/null || true\n\
-             ip route del 128.0.0.0/1 2>/dev/null || true\n\
-             ip link del {ADAPTER} 2>/dev/null || true"
-        ));
+        elevated(&tear_down_script());
     }
 }
 
@@ -246,66 +295,83 @@ fn tail_of(path: &Path) -> String {
     lines.iter().rev().take(4).rev().cloned().collect::<Vec<_>>().join("\n")
 }
 
-/// Адреса серверов, приведённые к IPv4. В конфиге с балансировщиком
-/// серверов несколько — маршрут нужен до каждого.
-fn resolve(servers: &[String]) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
+/// Адреса серверов: отдельно IPv4 и IPv6. В конфиге с балансировщиком
+/// серверов несколько — правило нужно для каждого. IPv6 тоже: ядро вправе
+/// пойти к серверу по нему, и без правила такой путь ушёл бы в туннель.
+fn resolve(servers: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut v4: Vec<String> = Vec::new();
+    let mut v6: Vec<String> = Vec::new();
     for address in servers {
         if let Ok(addresses) = (address.as_str(), 443u16).to_socket_addrs() {
             for socket in addresses {
-                if socket.is_ipv4() {
-                    let ip = socket.ip().to_string();
-                    if !result.contains(&ip) {
-                        result.push(ip);
-                    }
+                let ip = socket.ip().to_string();
+                let list = if socket.is_ipv4() { &mut v4 } else { &mut v6 };
+                if !list.contains(&ip) {
+                    list.push(ip);
                 }
             }
         }
     }
-    result
+    (v4, v6)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn gateway() -> Gateway {
-        Gateway { via: "192.168.1.1".into(), dev: "wlan0".into() }
+    fn script(ipv6: bool) -> String {
+        bring_up_script(&["203.0.113.7".into()], &["2001:db8::7".into()], ipv6)
     }
 
     #[test]
-    fn server_routes_come_before_the_tunnel_takes_over() {
-        let script = bring_up_script(&["203.0.113.7".into()], &gateway());
-        let server = script.find("203.0.113.7").expect("нет маршрута до сервера");
-        let default = script.find("0.0.0.0/1").expect("нет маршрута по умолчанию");
+    fn servers_go_by_the_live_route_before_the_tunnel_takes_over() {
+        let script = script(false);
+        let server = script.find("to 203.0.113.7/32 lookup main").expect("нет правила до сервера");
+        let tunnel = script.find(&format!("lookup {TABLE} pref")).expect("нет правила туннеля");
         assert!(
-            server < default,
-            "маршрут до сервера обязан лечь раньше перехвата, иначе трафик ядра зациклится"
+            server < tunnel,
+            "правило до сервера обязано лечь раньше перехвата, иначе трафик ядра зациклится"
         );
+        assert!(script.contains("blackhole 203.0.113.7/32"), "без сети пакеты к серверу не должны уходить в туннель");
     }
 
     #[test]
-    fn tunnel_takes_traffic_in_two_halves() {
-        let script = bring_up_script(&["203.0.113.7".into()], &gateway());
-        assert!(script.contains("0.0.0.0/1"));
-        assert!(script.contains("128.0.0.0/1"));
-        assert!(
-            !script.contains("default dev"),
-            "исходный маршрут по умолчанию трогать нельзя — его потом нечем вернуть"
-        );
+    fn main_default_route_is_left_alone() {
+        let script = script(true);
+        for line in script.lines().filter(|line| line.contains("default dev")) {
+            assert!(
+                line.contains(&format!("table {TABLE}")),
+                "маршрут по умолчанию основной таблицы трогать нельзя: {line}"
+            );
+        }
+        assert!(script.contains("suppress_prefixlength 0"), "локальная сеть должна остаться локальной");
+    }
+
+    #[test]
+    fn ipv6_goes_into_the_tunnel_only_when_present() {
+        let with = script(true);
+        assert!(with.contains("ip -6 rule add to 2001:db8::7/128 lookup main"));
+        assert!(with.contains(&format!("ip -6 rule add lookup {TABLE}")));
+        // IPv6 может быть выключен в ядре — это не повод ломать IPv4
+        for line in with.lines().filter(|line| line.starts_with("ip -6")) {
+            assert!(line.ends_with("|| true"), "команда IPv6 должна прощать отказ: {line}");
+        }
+        assert!(!script(false).contains("ip -6"));
     }
 
     #[test]
     fn interface_belongs_to_the_user_so_the_bridge_needs_no_rights() {
-        let script = bring_up_script(&[], &gateway());
-        assert!(script.contains("mode tun user "), "интерфейс должен создаваться на пользователя");
+        assert!(script(false).contains("mode tun user "), "интерфейс должен создаваться на пользователя");
     }
 
     #[test]
-    fn teardown_survives_missing_pieces() {
-        let script = tear_down_script(&["203.0.113.7".into()]);
+    fn teardown_survives_missing_pieces_and_removes_every_rule() {
+        let script = tear_down_script();
         assert!(!script.contains("set -e"), "уборка не должна падать на первом же отсутствии");
-        assert!(script.contains("203.0.113.7"));
+        for pref in [PREF_SERVERS, PREF_LOCAL, PREF_TUNNEL] {
+            assert!(script.contains(&format!("while ip rule del pref {pref}")));
+            assert!(script.contains(&format!("while ip -6 rule del pref {pref}")));
+        }
         assert!(script.contains("ip link del"));
     }
 }
