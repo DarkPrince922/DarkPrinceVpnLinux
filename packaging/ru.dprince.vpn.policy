@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Режим «весь трафик» DPrince VPN без пароля для того, кто сидит за компьютером.
+  Разрешение — только на помощника dp-tun-helper: он умеет поднять и убрать
+  интерфейс dpvpn0 с маршрутами, и больше ничего. Удалённым и неактивным
+  сеансам — по-прежнему с паролем администратора.
+-->
+<policyconfig>
+  <vendor>DPrince VPN</vendor>
+  <vendor_url>https://dprince.online</vendor_url>
+  <action id="ru.dprince.vpn.tun">
+    <description>Включить режим «весь трафик» DPrince VPN</description>
+    <message>DPrince VPN нужно настроить сеть для режима «весь трафик»</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/darkprince-vpn/dp-tun-helper</annotate>
+  </action>
+</policyconfig>

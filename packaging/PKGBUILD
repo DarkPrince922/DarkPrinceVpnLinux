@@ -66,6 +66,11 @@ package() {
         fi
     done
 
+    # режим «весь трафик» без пароля: помощник с правами и правило polkit к нему
+    install -Dm755 packaging/dp-tun-helper "$pkgdir/usr/lib/$pkgname/dp-tun-helper"
+    install -Dm644 packaging/ru.dprince.vpn.policy \
+        "$pkgdir/usr/share/polkit-1/actions/ru.dprince.vpn.policy"
+
     install -Dm644 packaging/darkprince-vpn.desktop \
         "$pkgdir/usr/share/applications/$pkgname.desktop"
     install -Dm644 src-tauri/icons/128x128.png \

@@ -113,6 +113,14 @@ pub fn pick_port(preferred: u16) -> u16 {
         .unwrap_or(preferred)
 }
 
+/// Любой свободный порт — для временного ядра, которым меряем задержку.
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .unwrap_or(0)
+}
+
 /// Снимает только свои забытые процессы — по полному пути к файлу.
 /// Снимать по имени нельзя: `xray` есть у половины VPN-клиентов, и чужой
 /// процесс — не наша собственность. `pgrep -f` сверяет всю командную

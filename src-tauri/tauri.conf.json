@@ -37,16 +37,34 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": [
+      "deb",
+      "appimage"
+    ],
     "createUpdaterArtifacts": true,
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png"],
-    "resources": ["core/*"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.png"
+    ],
+    "resources": [
+      "core/*"
+    ],
     "category": "Utility",
     "shortDescription": "Клиент DarkPrince VPN",
     "longDescription": "Клиент DarkPrince VPN: подписка из кабинета, режим системного прокси и режим полного туннеля.",
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1", "polkit", "iproute2"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libayatana-appindicator3-1",
+          "polkit",
+          "iproute2"
+        ],
+        "files": {
+          "/usr/lib/darkprince-vpn/dp-tun-helper": "../packaging/dp-tun-helper",
+          "/usr/share/polkit-1/actions/ru.dprince.vpn.policy": "../packaging/ru.dprince.vpn.policy"
+        }
       }
     }
   }

@@ -11,8 +11,13 @@
 //! **на имя текущего пользователя**, поэтому мост открывает его без всяких
 //! прав и остаётся нашим обычным потомком — а значит, гибнет вместе с
 //! приложением. Через `pkexec` выполняется только то, что действительно
-//! требует прав: создание интерфейса и правка маршрутов. Пароль спрашивается
-//! один раз на подключение, а не на каждую команду.
+//! требует прав: создание интерфейса и правка маршрутов.
+//!
+//! Это делает помощник `dp-tun-helper` (packaging/), и правило polkit
+//! разрешает его активному пользователю без пароля — как у Happ и других
+//! клиентов. Пакеты .deb и pacman ставят помощника сами. Если его нет
+//! (AppImage), пароль спросят один раз: заодно с туннелем помощник и правило
+//! поставятся в систему, и дальше подключение пойдёт без пароля.
 //!
 //! Про маршруты. Маршрут по умолчанию из основной таблицы не трогаем вовсе:
 //! трафик в туннель уводится отдельной таблицей и правилами (как делает
@@ -35,16 +40,30 @@ use std::time::{Duration, Instant};
 use crate::sys;
 
 pub const ADAPTER: &str = "dpvpn0";
+#[cfg(test)]
 const ADDRESS: &str = "198.18.0.1";
+#[cfg(test)]
 const MASK: &str = "24";
 /// Адрес туннеля в IPv6 — из частного диапазона, наружу не виден.
+#[cfg(test)]
 const ADDRESS6: &str = "fd66:6470:7276::1";
 /// Таблица маршрутов туннеля и приоритеты правил. Номера свои, чтобы не
-/// задеть чужие правила; по ним же правила и убираются.
+/// задеть чужие правила; по ним же правила и убираются. Сами команды — в
+/// помощнике (packaging/dp-tun-helper); здесь значения для сверки в тестах.
+#[cfg(test)]
 const TABLE: &str = "7276";
+#[cfg(test)]
 const PREF_SERVERS: u32 = 7270;
+#[cfg(test)]
 const PREF_LOCAL: u32 = 7271;
+#[cfg(test)]
 const PREF_TUNNEL: u32 = 7272;
+
+/// Помощник с правами и правило polkit к нему — те же файлы, что кладут пакеты.
+const HELPER: &str = include_str!("../../packaging/dp-tun-helper");
+const POLICY: &str = include_str!("../../packaging/ru.dprince.vpn.policy");
+const HELPER_PATH: &str = "/usr/lib/darkprince-vpn/dp-tun-helper";
+const POLICY_PATH: &str = "/usr/share/polkit-1/actions/ru.dprince.vpn.policy";
 
 pub struct Tunnel {
     process: Option<Child>,
@@ -95,11 +114,10 @@ impl Tunnel {
             if ipv6 { "есть — тоже в туннель" } else { "в системе не настроен" }
         ));
 
-        // Всё, что требует прав, — одним заходом: один запрос пароля.
-        let script = bring_up_script(&v4, &v6, ipv6);
-        if !elevated(&script) {
+        // Всё, что требует прав, — одним вызовом помощника.
+        if !helper(&up_args(&v4, &v6, ipv6)) {
             // мог успеть подняться интерфейс или часть правил — убираем
-            elevated(&tear_down_script());
+            helper(&["down".to_string()]);
             return Err("не удалось поднять туннель: система отказала в правах. \
 Если окно запроса пароля не появилось, проверьте, что служба polkit запущена."
                 .into());
@@ -140,7 +158,7 @@ impl Tunnel {
             let _ = child.wait();
         }
         if self.up {
-            elevated(&tear_down_script());
+            helper(&["down".to_string()]);
             self.up = false;
         }
     }
@@ -210,74 +228,54 @@ fn has_ipv6_route() -> bool {
         .unwrap_or(false)
 }
 
-/// Скрипт поднятия. Одной строкой, потому что `pkexec` спрашивает пароль на
-/// каждый свой запуск: десять команд — десять запросов.
-fn bring_up_script(servers: &[String], servers6: &[String], ipv6: bool) -> String {
-    let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
-    let mut lines = vec![
-        "set -e".to_string(),
-        // интерфейс создаётся на имя пользователя — мосту тогда не нужны права
-        format!("ip tuntap add dev {ADAPTER} mode tun user {user}"),
-        format!("ip addr add {ADDRESS}/{MASK} dev {ADAPTER}"),
-        format!("ip link set dev {ADAPTER} up"),
-    ];
-
-    // 1. Серверы — по основной таблице, то есть по живому маршруту системы.
-    //    Обязательно раньше правила туннеля. Чёрная дыра в таблице туннеля —
-    //    на случай, когда сети нет вовсе: тогда пакеты ядра к серверу
-    //    пропадут, а не уйдут по кругу в собственный туннель.
-    for ip in servers {
-        lines.push(format!("ip rule add to {ip}/32 lookup main pref {PREF_SERVERS}"));
-        lines.push(format!("ip route replace blackhole {ip}/32 table {TABLE}"));
-    }
-    // 2. Локальная сеть и точные маршруты системы — как были: основная
-    //    таблица, но без её маршрута по умолчанию.
-    lines.push(format!("ip rule add lookup main suppress_prefixlength 0 pref {PREF_LOCAL}"));
-    // 3. Всё остальное — в туннель.
-    lines.push(format!("ip route replace default dev {ADAPTER} table {TABLE}"));
-    lines.push(format!("ip rule add lookup {TABLE} pref {PREF_TUNNEL}"));
-
-    // IPv6 — тем же порядком. Каждая команда отдельно прощает отказ: IPv6
-    // бывает выключен в ядре, и это не повод оставить человека без IPv4.
-    if ipv6 {
-        let soft = |command: String| format!("{command} 2>/dev/null || true");
-        lines.push(soft(format!("ip -6 addr add {ADDRESS6}/64 dev {ADAPTER} nodad")));
-        for ip in servers6 {
-            lines.push(soft(format!("ip -6 rule add to {ip}/128 lookup main pref {PREF_SERVERS}")));
-            lines.push(soft(format!("ip -6 route replace blackhole {ip}/128 table {TABLE}")));
-        }
-        lines.push(soft(format!(
-            "ip -6 rule add lookup main suppress_prefixlength 0 pref {PREF_LOCAL}"
-        )));
-        lines.push(soft(format!("ip -6 route replace default dev {ADAPTER} table {TABLE}")));
-        lines.push(soft(format!("ip -6 rule add lookup {TABLE} pref {PREF_TUNNEL}")));
-    }
-
-    lines.join("\n")
+/// Аргументы помощника: `up 0|1 4:адрес 6:адрес …`.
+fn up_args(servers: &[String], servers6: &[String], ipv6: bool) -> Vec<String> {
+    let mut args = vec!["up".to_string(), if ipv6 { "1" } else { "0" }.to_string()];
+    args.extend(servers.iter().map(|ip| format!("4:{ip}")));
+    args.extend(servers6.iter().map(|ip| format!("6:{ip}")));
+    args
 }
 
-/// Уборка. Правила снимаем по своим приоритетам все до одного — их могло
-/// остаться несколько от оборванных запусков.
-fn tear_down_script() -> String {
-    let mut lines = Vec::new();
-    for family in ["", "-6 "] {
-        for pref in [PREF_TUNNEL, PREF_LOCAL, PREF_SERVERS] {
-            lines.push(format!("while ip {family}rule del pref {pref} 2>/dev/null; do :; done"));
-        }
-        lines.push(format!("ip {family}route flush table {TABLE} 2>/dev/null || true"));
-    }
-    lines.push(format!("ip link del {ADAPTER} 2>/dev/null || true"));
-    lines.join("\n")
+/// Стоит ли в системе помощник ровно этой версии вместе с правилом polkit.
+fn helper_installed() -> bool {
+    std::fs::read_to_string(HELPER_PATH).is_ok_and(|text| text == HELPER)
+        && Path::new(POLICY_PATH).exists()
 }
 
-/// Выполняет скрипт с правами. Отдельным процессом `sh`, а не строкой в
-/// `pkexec`: так аргументы не разбираются оболочкой дважды.
-fn elevated(script: &str) -> bool {
-    sys::command("pkexec")
-        .args(["/bin/sh", "-c", script])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+/// Скрипт для случая, когда помощника нет или он старый: поставить его и
+/// правило в систему (тогда в следующий раз пароль не понадобится) и сразу
+/// выполнить. Содержимое — внутри скрипта, а не во временных файлах
+/// пользователя: подменить то, что root поставит в систему, некому.
+/// Не вышло поставить (например, /usr только для чтения) — помощник всё
+/// равно выполнится из закрытой временной папки root.
+fn install_and_run_script() -> String {
+    format!(
+        r#"umask 022
+t=$(mktemp -d) || exit 1
+cat > "$t/helper" <<'DP_HELPER_EOF'
+{HELPER}DP_HELPER_EOF
+cat > "$t/policy" <<'DP_POLICY_EOF'
+{POLICY}DP_POLICY_EOF
+{{ install -Dm755 "$t/helper" {HELPER_PATH} && install -Dm644 "$t/policy" {POLICY_PATH}; }} 2>/dev/null || true
+/bin/sh "$t/helper" "$@"
+rc=$?
+rm -rf "$t"
+exit $rc"#
+    )
+}
+
+/// Выполняет помощника с правами. Стоит — pkexec пускает его без пароля;
+/// нет — один раз с паролем, заодно ставя его в систему.
+fn helper(args: &[String]) -> bool {
+    let status = if helper_installed() {
+        sys::command("pkexec").arg(HELPER_PATH).args(args).status()
+    } else {
+        sys::command("pkexec")
+            .args(["/bin/sh", "-c", &install_and_run_script(), "dp-tun-helper"])
+            .args(args)
+            .status()
+    };
+    status.map(|status| status.success()).unwrap_or(false)
 }
 
 /// Следы предыдущего запуска, оборванного не по-хорошему.
@@ -285,7 +283,7 @@ pub fn clear_stale_state(core_dir: &Path) {
     sys::kill_our(&core_dir.join("tun2socks"));
     if sys::json("ip", &["-j", "link", "show", ADAPTER]).is_some() && has_pkexec() {
         sys::log("остался интерфейс от прошлого запуска — убираю");
-        elevated(&tear_down_script());
+        helper(&["down".to_string()]);
     }
 }
 
@@ -319,59 +317,62 @@ fn resolve(servers: &[String]) -> (Vec<String>, Vec<String>) {
 mod tests {
     use super::*;
 
-    fn script(ipv6: bool) -> String {
-        bring_up_script(&["203.0.113.7".into()], &["2001:db8::7".into()], ipv6)
-    }
-
     #[test]
     fn servers_go_by_the_live_route_before_the_tunnel_takes_over() {
-        let script = script(false);
-        let server = script.find("to 203.0.113.7/32 lookup main").expect("нет правила до сервера");
-        let tunnel = script.find(&format!("lookup {TABLE} pref")).expect("нет правила туннеля");
+        let server = HELPER.find("lookup main pref \"$PREF_SERVERS\"").expect("нет правила до сервера");
+        let tunnel = HELPER.find("lookup \"$TABLE\" pref \"$PREF_TUNNEL\"").expect("нет правила туннеля");
         assert!(
             server < tunnel,
             "правило до сервера обязано лечь раньше перехвата, иначе трафик ядра зациклится"
         );
-        assert!(script.contains("blackhole 203.0.113.7/32"), "без сети пакеты к серверу не должны уходить в туннель");
+        assert!(HELPER.contains("blackhole \"$ip/32\""), "без сети пакеты к серверу не должны уходить в туннель");
+    }
+
+    #[test]
+    fn helper_constants_match_the_engine() {
+        assert!(HELPER.contains(&format!("ADAPTER={ADAPTER}\n")));
+        assert!(HELPER.contains(&format!("ADDRESS={ADDRESS}/{MASK}\n")));
+        assert!(HELPER.contains(&format!("ADDRESS6={ADDRESS6}/64\n")));
+        assert!(HELPER.contains(&format!("TABLE={TABLE}\n")));
+        assert!(HELPER.contains(&format!("PREF_SERVERS={PREF_SERVERS}\n")));
+        assert!(HELPER.contains(&format!("PREF_LOCAL={PREF_LOCAL}\n")));
+        assert!(HELPER.contains(&format!("PREF_TUNNEL={PREF_TUNNEL}\n")));
+        assert!(POLICY.contains(HELPER_PATH), "правило polkit должно указывать на того же помощника");
     }
 
     #[test]
     fn main_default_route_is_left_alone() {
-        let script = script(true);
-        for line in script.lines().filter(|line| line.contains("default dev")) {
-            assert!(
-                line.contains(&format!("table {TABLE}")),
-                "маршрут по умолчанию основной таблицы трогать нельзя: {line}"
-            );
+        for line in HELPER.lines().filter(|line| line.contains("default dev")) {
+            assert!(line.contains("table \"$TABLE\""), "маршрут по умолчанию основной таблицы трогать нельзя: {line}");
         }
-        assert!(script.contains("suppress_prefixlength 0"), "локальная сеть должна остаться локальной");
+        assert!(HELPER.contains("suppress_prefixlength 0"), "локальная сеть должна остаться локальной");
     }
 
     #[test]
-    fn ipv6_goes_into_the_tunnel_only_when_present() {
-        let with = script(true);
-        assert!(with.contains("ip -6 rule add to 2001:db8::7/128 lookup main"));
-        assert!(with.contains(&format!("ip -6 rule add lookup {TABLE}")));
-        // IPv6 может быть выключен в ядре — это не повод ломать IPv4
-        for line in with.lines().filter(|line| line.starts_with("ip -6")) {
+    fn ipv6_commands_forgive_failure() {
+        for line in HELPER.lines().map(str::trim).filter(|line| line.starts_with("ip -6") && !line.contains("rule del")) {
             assert!(line.ends_with("|| true"), "команда IPv6 должна прощать отказ: {line}");
         }
-        assert!(!script(false).contains("ip -6"));
     }
 
     #[test]
-    fn interface_belongs_to_the_user_so_the_bridge_needs_no_rights() {
-        assert!(script(false).contains("mode tun user "), "интерфейс должен создаваться на пользователя");
+    fn interface_belongs_to_the_caller_not_to_an_argument() {
+        assert!(HELPER.contains("mode tun user \"$owner\""));
+        assert!(HELPER.contains("id -nu \"$PKEXEC_UID\""), "пользователя берём у pkexec, а не из аргументов");
     }
 
     #[test]
-    fn teardown_survives_missing_pieces_and_removes_every_rule() {
-        let script = tear_down_script();
-        assert!(!script.contains("set -e"), "уборка не должна падать на первом же отсутствии");
-        for pref in [PREF_SERVERS, PREF_LOCAL, PREF_TUNNEL] {
-            assert!(script.contains(&format!("while ip rule del pref {pref}")));
-            assert!(script.contains(&format!("while ip -6 rule del pref {pref}")));
-        }
-        assert!(script.contains("ip link del"));
+    fn up_args_tag_address_families() {
+        let args = up_args(&["203.0.113.7".into()], &["2001:db8::7".into()], true);
+        assert_eq!(args, ["up", "1", "4:203.0.113.7", "6:2001:db8::7"]);
+    }
+
+    #[test]
+    fn install_script_embeds_both_files_intact() {
+        let script = install_and_run_script();
+        assert!(script.contains(HELPER));
+        assert!(script.contains(POLICY));
+        assert!(!HELPER.contains("DP_HELPER_EOF") && !POLICY.contains("DP_POLICY_EOF"));
+        assert!(script.contains(&format!("install -Dm755 \"$t/helper\" {HELPER_PATH}")));
     }
 }
