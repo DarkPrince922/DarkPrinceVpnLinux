@@ -60,6 +60,13 @@ struct Status {
     can_elevate: bool,
 }
 
+/// Сколько прошло через подключение, байты.
+#[derive(Serialize)]
+struct Traffic {
+    up: u64,
+    down: u64,
+}
+
 #[derive(Deserialize)]
 struct Request {
     method: String,
@@ -185,6 +192,20 @@ async fn probe(app: TauriState<'_, App>) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || dp_engine::probe(port))
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Счётчики «получено / отправлено». Замок движка — только узнать порт:
+/// сам запрос к ядру идёт уже без него.
+#[tauri::command]
+async fn traffic(app: TauriState<'_, App>) -> Result<Option<Traffic>, String> {
+    let Some((core, port)) = app.vpn.lock().unwrap().stats_endpoint() else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        dp_engine::traffic(&core, port).map(|(up, down)| Traffic { up, down })
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -587,6 +608,7 @@ fn main() {
             disconnect,
             status,
             ping_servers,
+            traffic,
             autostart_enabled,
             set_autostart,
             open_url,
