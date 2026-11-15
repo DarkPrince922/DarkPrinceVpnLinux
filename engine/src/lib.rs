@@ -55,6 +55,11 @@ pub struct Vpn {
     http_port: u16,
     /// Порт службы статистики ядра — по нему считаем трафик.
     api_port: u16,
+    /// Физический интерфейс, к которому в режиме «весь трафик» привязаны
+    /// выходы ядра, и сервер, к которому подключены: сменится сеть — ядро
+    /// перезапустится с новым интерфейсом (см. [`Vpn::follow_route`]).
+    interface: Option<String>,
+    server: Option<Server>,
 }
 
 impl Vpn {
@@ -69,6 +74,45 @@ impl Vpn {
             socks_port: config::SOCKS_PORT,
             http_port: config::HTTP_PORT,
             api_port: 0,
+            interface: None,
+            server: None,
+        }
+    }
+
+    /// Поднят ли туннель — чтобы фоновая проверка сети не ходила зря.
+    pub fn tunnel_up(&self) -> bool {
+        self.state == State::Connected && self.mode == Mode::Tun
+    }
+
+    /// Сеть сменилась — перезапускаем ядро с привязкой к новому интерфейсу.
+    ///
+    /// Выходы ядра привязаны к физическому интерфейсу, чтобы не попадать в
+    /// собственный туннель. Перешли с Wi-Fi на кабель — прежний интерфейс
+    /// мёртв, и без перезапуска интернет пропал бы до переподключения.
+    /// Туннель и мост остаются как были: порты у ядра те же, мост просто
+    /// соединится заново. Прав на это не нужно.
+    ///
+    /// `interface` узнаётся заранее, без замка движка: [`tun::default_route`].
+    pub fn follow_route(&mut self, interface: Option<String>) {
+        if !self.tunnel_up() {
+            return;
+        }
+        // Маршрута нет вовсе — сеть пропала. Ничего не трогаем: вернётся та
+        // же сеть — заработает само.
+        let Some(interface) = interface else { return };
+        if self.interface.as_deref() == Some(interface.as_str()) || interface == tun::ADAPTER {
+            return;
+        }
+        let Some(server) = self.server.clone() else { return };
+        sys::log(&format!("сеть сменилась: интерфейс {interface}, перезапускаю ядро"));
+        if let Some(mut child) = self.xray.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.interface = Some(interface);
+        if let Err(error) = self.start_xray(&server) {
+            sys::log(&format!("ядро после смены сети не поднялось: {error}"));
+            self.disconnect();
         }
     }
 
@@ -142,14 +186,28 @@ impl Vpn {
     }
 
     fn bring_up(&mut self, server: &Server, mode: Mode) -> Result<(), String> {
+        // В режиме «весь трафик» выходы ядра привязываются к физическому
+        // интерфейсу — иначе соединения, которые правила панели отправляют
+        // напрямую, уходили бы обратно в туннель. Интерфейс узнаём до
+        // подъёма туннеля, пока маршрут по умолчанию ещё настоящий.
+        self.interface = match mode {
+            Mode::Tun => tun::default_route().map(|route| route.dev),
+            Mode::Proxy => None,
+        };
+        self.server = Some(server.clone());
         self.start_xray(server)?;
         match mode {
             Mode::Proxy => proxy::enable(self.http_port, self.socks_port)?,
             Mode::Tun => {
                 let bridge = self.core_dir.join("tun2socks");
+                // серверов в конфиге бывает несколько — путь нужен до каждого
+                let mut servers = server.addresses.clone();
+                if servers.is_empty() {
+                    servers.push(server.address.clone());
+                }
                 self.tunnel.start(
                     &bridge,
-                    &[server.address.clone()],
+                    &servers,
                     self.socks_port,
                     &self.data_dir,
                 )?;
@@ -172,7 +230,13 @@ impl Vpn {
         let config_path = self.data_dir.join("xray-config.json");
         std::fs::write(
             &config_path,
-            config::build_with_stats(&server.raw_config, self.socks_port, self.http_port, self.api_port)?,
+            config::build_with_stats(
+                &server.raw_config,
+                self.socks_port,
+                self.http_port,
+                self.api_port,
+                self.interface.as_deref(),
+            )?,
         )
         .map_err(|error| format!("не удалось сохранить конфиг ядра: {error}"))?;
 
@@ -212,6 +276,8 @@ impl Vpn {
             let _ = child.wait();
         }
         self.state = State::Disconnected;
+        self.interface = None;
+        self.server = None;
     }
 
     /// Уборка следов запуска, оборванного жёстко.
@@ -272,7 +338,7 @@ pub fn real_delay(core_dir: &Path, work_dir: &Path, server: &Server) -> i64 {
     }
     let socks = sys::free_port();
     let http = (0..5).map(|_| sys::free_port()).find(|port| *port != socks).unwrap_or(0);
-    let Ok(built) = config::build(&server.raw_config, socks, http) else {
+    let Ok(built) = config::build(&server.raw_config, socks, http, None) else {
         return -1;
     };
     std::fs::create_dir_all(work_dir).ok();
