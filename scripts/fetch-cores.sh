@@ -10,7 +10,7 @@
 set -euo pipefail
 
 OUT=${1:-"$(dirname "$0")/../src-tauri/core"}
-XRAY_VERSION=${XRAY_VERSION:-v26.7.28}
+XRAY_VERSION=${XRAY_VERSION:-v26.11.9}
 TUN2SOCKS_VERSION=${TUN2SOCKS_VERSION:-v2.7.0}
 
 case "$(uname -m)" in
