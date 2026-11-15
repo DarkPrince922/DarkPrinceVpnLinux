@@ -492,6 +492,24 @@ fn quit(app: &tauri::AppHandle) {
     });
 }
 
+/// Пока поднят туннель, раз в пять секунд сверяем, через какой интерфейс
+/// система выходит в сеть: сменился — ядро перезапускается с привязкой к
+/// новому. Спрашиваем без замка движка, а замок берём, только если он
+/// свободен: идёт подключение — проверим в следующий раз.
+fn watch_network(vpn: Arc<Mutex<Vpn>>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(5));
+        let up = vpn.try_lock().map(|vpn| vpn.tunnel_up()).unwrap_or(false);
+        if !up {
+            continue;
+        }
+        let interface = dp_engine::tun::default_route().map(|route| route.dev);
+        if let Ok(mut vpn) = vpn.try_lock() {
+            vpn.follow_route(interface);
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
         // Второй запуск не поднимает второе приложение, а показывает уже
@@ -538,8 +556,10 @@ fn main() {
             // следы прошлого запуска, если его завершили жёстко
             Vpn::clear_stale_state(&core_dir);
 
+            let vpn = Arc::new(Mutex::new(Vpn::new(core_dir.clone(), data_dir.clone())));
+            watch_network(Arc::clone(&vpn));
             app.manage(App {
-                vpn: Arc::new(Mutex::new(Vpn::new(core_dir.clone(), data_dir.clone()))),
+                vpn,
                 servers: Mutex::new(Vec::new()),
                 core_dir,
                 data_dir,
