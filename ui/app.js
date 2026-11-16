@@ -1538,7 +1538,7 @@ async function startUpdate(now, later) {
 // ================= оформление =================
 
 const THEMES = [
-    { id: "night", title: "Ночь" },
+    { id: "night", title: "Аква" },
     { id: "sunset", title: "Закат" },
     { id: "indigo", title: "Индиго" },
     { id: "graphite", title: "Графит" },
