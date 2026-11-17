@@ -1232,16 +1232,16 @@ button.danger:hover { border-color: var(--danger); }
 
 /* Экран входа и главный появляются плавно, блок за блоком. */
 #auth:not(.hidden) > *,
-#home:not(.hidden) > * {
+#home:not(.hidden) .tab.active > * {
     animation: slide-in 0.55s var(--ease) both;
 }
 
-#auth > :nth-child(2), #home > :nth-child(2) { animation-delay: 0.04s; }
-#auth > :nth-child(3), #home > :nth-child(3) { animation-delay: 0.08s; }
-#auth > :nth-child(4), #home > :nth-child(4) { animation-delay: 0.12s; }
-#auth > :nth-child(5), #home > :nth-child(5) { animation-delay: 0.16s; }
-#auth > :nth-child(6), #home > :nth-child(6) { animation-delay: 0.2s; }
-#auth > :nth-child(n + 7), #home > :nth-child(n + 7) { animation-delay: 0.24s; }
+#auth > :nth-child(2), .tab > :nth-child(2) { animation-delay: 0.04s; }
+#auth > :nth-child(3), .tab > :nth-child(3) { animation-delay: 0.08s; }
+#auth > :nth-child(4), .tab > :nth-child(4) { animation-delay: 0.12s; }
+#auth > :nth-child(5), .tab > :nth-child(5) { animation-delay: 0.16s; }
+#auth > :nth-child(6), .tab > :nth-child(6) { animation-delay: 0.2s; }
+#auth > :nth-child(n + 7), .tab > :nth-child(n + 7) { animation-delay: 0.24s; }
 
 /* Крупные цифры — тем же шрифтом, что заголовки, как на Android. */
 #days {
@@ -1264,3 +1264,62 @@ button.danger:hover { border-color: var(--danger); }
 
 /* «Аква»: огни городов на карте — бирюзовые, а не жёлтые */
 [data-theme="night"] .map { filter: hue-rotate(135deg) saturate(1.2); }
+
+/* ---------- вкладки и нижний «остров» (как на Android) ---------- */
+.tab { display: none; }
+.tab.active { display: block; }
+main { padding-bottom: 104px; }
+
+.page-title {
+    margin: 6px 4px 16px;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.8px;
+}
+
+.dock {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 999px;
+    background: rgba(14, 22, 30, 0.72);
+    border: 1px solid var(--outline);
+    backdrop-filter: blur(22px);
+    box-shadow: 0 14px 40px var(--shadow), inset 0 1px 0 var(--gloss);
+}
+
+body:has(#home.hidden) .dock { display: none; }
+
+.dock button {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 11px 14px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 13px;
+    transition: background 0.3s var(--ease), color 0.3s var(--ease), padding 0.3s var(--ease), gap 0.3s var(--ease);
+}
+
+.dock button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.dock button span { max-width: 0; overflow: hidden; white-space: nowrap; transition: max-width 0.35s var(--ease); }
+.dock button.active { background: var(--accent); color: var(--on-accent); gap: 8px; padding: 11px 18px; box-shadow: 0 4px 18px var(--accent-soft); }
+.dock button.active span { max-width: 90px; }
+.dock button:not(.active):hover { color: var(--text); background: var(--wash); border-color: transparent; }
+
+/* кнопка «Обновить серверы» */
+.refresh-servers { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 600; padding: 6px 12px; }
+.refresh-servers:hover { color: var(--accent-hi); }
+.refresh-servers.spinning svg { animation: spin 0.8s linear infinite; }
+main .section.with-action { align-items: center; }
+main .section.with-action > span { margin-right: auto; }
+/* свечение за кнопкой нужно только на главной */
+body:has(.tab[data-tab="home"]:not(.active)) .blob.a { opacity: 0; }

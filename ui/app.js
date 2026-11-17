@@ -1204,6 +1204,28 @@ $("#sheet").addEventListener("click", (event) => {
 });
 
 $("#refresh").addEventListener("click", loadSubscription);
+
+// «Обновить серверы»: заново тянем подписку и список, пока крутится значок
+$("#refreshServers").addEventListener("click", async () => {
+    const button = $("#refreshServers");
+    if (button.classList.contains("spinning")) return;
+    button.classList.add("spinning");
+    try {
+        await loadSubscription();
+    } finally {
+        button.classList.remove("spinning");
+    }
+});
+
+// нижняя панель: переключение вкладок
+document.querySelectorAll("#dock button").forEach((button) => {
+    button.addEventListener("click", () => {
+        const target = button.dataset.go;
+        document.querySelectorAll("#dock button").forEach((node) => node.classList.toggle("active", node === button));
+        document.querySelectorAll("#home .tab").forEach((node) => node.classList.toggle("active", node.dataset.tab === target));
+        document.querySelector("main").scrollTo({ top: 0 });
+    });
+});
 $("#openCabinet").addEventListener("click", () =>
     invoke("open_url", { url: "https://dprince.online/cabinet.html" })
 );

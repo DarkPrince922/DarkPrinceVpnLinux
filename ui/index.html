@@ -89,6 +89,7 @@
 
         <!-- ================= ГЛАВНОЕ ================= -->
         <section id="home" class="hidden">
+          <div class="tab active" data-tab="home">
             <div class="power-wrap">
                 <!-- Карта живёт под кнопкой: она подсказывает, куда идёт
                      трафик, но спорить с кнопкой за внимание не должна. -->
@@ -125,7 +126,13 @@
             </div>
             <p class="tiny muted" id="modeHint" style="margin:8px 4px 14px"></p>
 
-            <p class="section">Сервер</p>
+            <p class="section with-action">
+                <span>Сервер</span>
+                <button class="ghost small refresh-servers" id="refreshServers" title="Обновить список серверов">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+                    Обновить серверы
+                </button>
+            </p>
             <div class="card">
                 <button class="pick" id="serverPick">
                     <span class="dot"></span>
@@ -137,7 +144,10 @@
                     <span class="chev">›</span>
                 </button>
             </div>
+          </div>
 
+          <div class="tab" data-tab="account">
+            <h2 class="page-title">Аккаунт</h2>
             <p class="section">Подписка</p>
 
             <!-- Появляется, только если подписок несколько: одну переключать
@@ -160,7 +170,7 @@
                         <div class="tiny muted" id="planState"></div>
                     </div>
                     <div style="text-align:right">
-                        <div class="gold" style="font-size:26px;font-weight:600;line-height:1" id="days">—</div>
+                        <div class="gold" style="font-size:20px;font-weight:700;line-height:1" id="days">—</div>
                         <div class="tiny muted" id="daysWord"></div>
                     </div>
                 </div>
@@ -194,6 +204,10 @@
                 </div>
             </div>
 
+          </div>
+
+          <div class="tab" data-tab="more">
+            <h2 class="page-title">Ещё</h2>
             <p class="section">Запуск</p>
             <div class="card">
                 <label class="switch-row">
@@ -226,8 +240,22 @@
                 <button class="ghost small" id="refresh">Обновить</button>
                 <button class="ghost small" id="logout">Выйти из аккаунта</button>
             </div>
+          </div>
         </section>
     </main>
+
+    <!-- ================= НИЖНЯЯ ПАНЕЛЬ ================= -->
+    <nav class="dock" id="dock" aria-label="Разделы">
+        <button data-go="home" class="active">
+            <svg viewBox="0 0 24 24"><path d="M12 2v9"/><path d="M18.4 6.6a8.5 8.5 0 1 1-12.8 0"/></svg><span>Главная</span>
+        </button>
+        <button data-go="account">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg><span>Аккаунт</span>
+        </button>
+        <button data-go="more">
+            <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span>Ещё</span>
+        </button>
+    </nav>
 
     <!-- ================= СПИСОК СЕРВЕРОВ ================= -->
     <div class="sheet hidden" id="sheet">
