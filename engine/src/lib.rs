@@ -60,6 +60,11 @@ pub struct Vpn {
     /// перезапустится с новым интерфейсом (см. [`Vpn::follow_route`]).
     interface: Option<String>,
     server: Option<Server>,
+    /// Адреса остальных узлов подписки. В режиме «весь трафик» к ним тоже
+    /// прокладывается путь мимо туннеля: иначе замер задержки до них шёл бы
+    /// в собственный туннель, мост отвечал бы мгновенно и у всех узлов,
+    /// кроме текущего, выходило бы «0 мс».
+    bypass: Vec<String>,
 }
 
 impl Vpn {
@@ -76,7 +81,14 @@ impl Vpn {
             api_port: 0,
             interface: None,
             server: None,
+            bypass: Vec::new(),
         }
+    }
+
+    /// Адреса всех узлов подписки — их трафик пойдёт мимо туннеля.
+    /// Применяется при следующем подключении.
+    pub fn set_bypass(&mut self, addresses: Vec<String>) {
+        self.bypass = addresses;
     }
 
     /// Поднят ли туннель — чтобы фоновая проверка сети не ходила зря.
@@ -204,6 +216,11 @@ impl Vpn {
                 let mut servers = server.addresses.clone();
                 if servers.is_empty() {
                     servers.push(server.address.clone());
+                }
+                for address in &self.bypass {
+                    if !servers.contains(address) {
+                        servers.push(address.clone());
+                    }
                 }
                 self.tunnel.start(
                     &bridge,
